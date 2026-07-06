@@ -1,0 +1,40 @@
+:root {
+  color: #17202a;
+  background: #f6fbff;
+  font-family:
+    "Trebuchet MS",
+    "Aptos",
+    "Segoe UI",
+    sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+  overflow-x: hidden;
+  background:
+    radial-gradient(circle at 12% 0%, rgba(81, 176, 191, 0.18), transparent 31rem),
+    linear-gradient(180deg, #edfaff 0%, #fff7e8 43%, #f8fbf3 100%);
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  overflow-x: hidden;
+}
+
+#root {
+  overflow-x: hidden;
+}
+
+button {
+  font: inherit;
+}

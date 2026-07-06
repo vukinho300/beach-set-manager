@@ -1,0 +1,24 @@
+{
+  "name": "Beach Set Manager",
+  "short_name": "Beach Sets",
+  "description": "Local phone app for tracking beach sunbed and parasol sets.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "theme_color": "#f6fbff",
+  "background_color": "#f6fbff",
+  "icons": [
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/maskable-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}
