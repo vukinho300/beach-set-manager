@@ -1,6 +1,6 @@
 # Beach Set Manager
 
-A local-only React/Vite/TypeScript phone app for tracking 56 beach sunbed/parasol sets.
+A local-only React/Vite/TypeScript phone app for tracking 56 beach sunbed/parasol sets plus 4 separate extra beds.
 
 The app stores data in `localStorage` on the current phone/browser. Each phone or browser has its own separate saved data. It does not use a backend, login, database, Supabase, Firebase, or real-time sharing.
 
