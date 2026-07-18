@@ -1,4 +1,5 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { MutableRefObject } from 'react';
 import './App.css';
 
 type SetStatus = 'free' | 'paid' | 'reserved' | 'partial';
@@ -6,11 +7,14 @@ type BedStatus = Exclude<SetStatus, 'partial'>;
 type BeachId = 1 | 2;
 type BedId = 1 | 2 | 3 | 4;
 type BedLabel = `Bed ${BedId}`;
+type ReservationSurname = string;
+type TabId = 'beach1' | 'beach2' | 'beds' | 'aquapark';
 
 type BeachSet = {
   id: number;
   beach: BeachId;
   status: SetStatus;
+  beachReservationId?: string;
   surname?: string;
   reservedDays?: number;
   partialNote?: string;
@@ -21,30 +25,75 @@ type ExtraBed = {
   id: BedId;
   label: BedLabel;
   status: BedStatus;
+  beachReservationId?: string;
   surname?: string;
   reservedDays?: number;
+  updatedAt?: string;
+};
+
+type BeachReservation = {
+  id: string;
+  surname: string;
+  reservedDays: number;
+  notes?: string;
+  createdAt: string;
+  updatedAt?: string;
+};
+
+type BeachReservationDetails = {
+  surname: string;
+  reservedDays: number;
+  notes?: string;
+};
+
+type AquaparkReservation = {
+  id: string;
+  surname: string;
+  reservedDays: number;
+  notes?: string;
+  createdAt: string;
   updatedAt?: string;
 };
 
 type BeachSetMap = Record<number, BeachSet>;
 type ExtraBedMap = Record<BedId, ExtraBed>;
 type DetailMode = 'actions' | 'reserved' | 'partial';
-type ActiveEditor = { kind: 'set'; id: number } | { kind: 'bed'; id: BedId };
+type ActiveEditor =
+  | { kind: 'set'; id: number }
+  | { kind: 'bed'; id: BedId }
+  | { kind: 'aquapark'; id?: string };
+type ActiveReservationSummary = {
+  id: string;
+  surname: string;
+  reservedDays: number;
+  notes?: string;
+  assignmentLabel: string;
+};
+type BeachAssignment = {
+  kind: 'set' | 'bed';
+  id: number;
+  label: string;
+};
 type AppData = {
   sets: BeachSetMap;
   extraBeds: ExtraBedMap;
+  beachReservations: BeachReservation[];
+  savedSurnames: ReservationSurname[];
+  aquaparkReservations: AquaparkReservation[];
 };
 type BackupPayload = AppData & {
   app: 'Beach Set Manager';
-  version: 3;
+  version: 5;
   exportedAt: string;
 };
 
 const TOTAL_SETS = 56;
-const STORAGE_KEY = 'sunbed-beach-manager:v3';
-const LEGACY_STORAGE_KEY = 'sunbed-beach-manager:v2';
+const STORAGE_KEY = 'sunbed-beach-manager:v5';
+const LEGACY_STORAGE_KEY = 'sunbed-beach-manager:v4';
+const OLDER_STORAGE_KEY = 'sunbed-beach-manager:v3';
+const OLD_STORAGE_KEY = 'sunbed-beach-manager:v2';
 const OLDEST_STORAGE_KEY = 'sunbed-beach-manager:v1';
-const APP_STORAGE_KEYS = [STORAGE_KEY, LEGACY_STORAGE_KEY, OLDEST_STORAGE_KEY];
+const APP_STORAGE_KEYS = [STORAGE_KEY, LEGACY_STORAGE_KEY, OLDER_STORAGE_KEY, OLD_STORAGE_KEY, OLDEST_STORAGE_KEY];
 const STATUS_ORDER: SetStatus[] = ['free', 'paid', 'reserved', 'partial'];
 const BED_STATUS_ORDER: BedStatus[] = ['free', 'paid', 'reserved'];
 const BEACH_ONE_UPPER_ROW = [20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10];
@@ -96,6 +145,72 @@ function createFreeAppData(): AppData {
   return {
     sets: createFreeBeachSets(),
     extraBeds: createFreeExtraBeds(),
+    beachReservations: [],
+    savedSurnames: [],
+    aquaparkReservations: [],
+  };
+}
+
+function createReservationId(prefix: string): string {
+  const now = new Date().toISOString();
+
+  return typeof window.crypto?.randomUUID === 'function'
+    ? window.crypto.randomUUID()
+    : `${prefix}-${now}-${Math.random().toString(16).slice(2)}`;
+}
+
+function normalizeSurname(value: string): string {
+  return value.trim().replace(/\s+/g, ' ');
+}
+
+function getSurnameKey(value: string): string {
+  return normalizeSurname(value).toLocaleLowerCase();
+}
+
+function upsertSavedSurname(currentSurnames: ReservationSurname[], surname: string): ReservationSurname[] {
+  const normalized = normalizeSurname(surname);
+
+  if (!normalized) {
+    return currentSurnames;
+  }
+
+  const existingIndex = currentSurnames.findIndex((savedSurname) => getSurnameKey(savedSurname) === getSurnameKey(normalized));
+
+  if (existingIndex === -1) {
+    return [...currentSurnames, normalized].sort((first, second) => first.localeCompare(second));
+  }
+
+  const existing = currentSurnames[existingIndex];
+  const shouldImproveCapitalization =
+    existing === existing.toLocaleLowerCase() && normalized !== normalized.toLocaleLowerCase();
+
+  if (!shouldImproveCapitalization) {
+    return currentSurnames;
+  }
+
+  return currentSurnames.map((savedSurname, index) => (index === existingIndex ? normalized : savedSurname));
+}
+
+function normalizeSavedSurnames(value: unknown): ReservationSurname[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.reduce<ReservationSurname[]>((savedSurnames, rawSurname) => {
+    return typeof rawSurname === 'string' ? upsertSavedSurname(savedSurnames, rawSurname) : savedSurnames;
+  }, []);
+}
+
+function createBeachReservation(details: BeachReservationDetails): BeachReservation {
+  const now = new Date().toISOString();
+
+  return {
+    id: createReservationId('beach'),
+    surname: normalizeSurname(details.surname),
+    reservedDays: Math.max(1, Math.floor(details.reservedDays) || 1),
+    notes: details.notes?.trim() || undefined,
+    createdAt: now,
+    updatedAt: now,
   };
 }
 
@@ -134,6 +249,7 @@ function normalizeSet(value: unknown, id: number): BeachSet {
     id,
     beach: getBeachForSet(id),
     status: value.status,
+    beachReservationId: value.beachReservationId,
     surname: value.surname,
     reservedDays: value.reservedDays,
     partialNote: value.partialNote,
@@ -147,6 +263,10 @@ function normalizeImportedSet(value: unknown, id: number): BeachSet | null {
   }
 
   const surname = typeof value.surname === 'string' ? value.surname.trim() : undefined;
+  const beachReservationId =
+    typeof value.beachReservationId === 'string' && value.beachReservationId.trim()
+      ? value.beachReservationId
+      : undefined;
   const partialNote = typeof value.partialNote === 'string' ? value.partialNote.trim() : undefined;
   const updatedAt = typeof value.updatedAt === 'string' ? value.updatedAt : undefined;
   const reservedDays =
@@ -158,6 +278,7 @@ function normalizeImportedSet(value: unknown, id: number): BeachSet | null {
     id,
     beach: getBeachForSet(id),
     status: value.status,
+    beachReservationId,
     surname: surname || undefined,
     reservedDays,
     partialNote: partialNote || undefined,
@@ -174,6 +295,7 @@ function normalizeBed(value: unknown, id: BedId): ExtraBed {
     id,
     label: `Bed ${id}`,
     status: value.status,
+    beachReservationId: value.beachReservationId,
     surname: value.surname,
     reservedDays: value.reservedDays,
     updatedAt: value.updatedAt,
@@ -186,6 +308,10 @@ function normalizeImportedBed(value: unknown, id: BedId): ExtraBed | null {
   }
 
   const surname = typeof value.surname === 'string' ? value.surname.trim() : undefined;
+  const beachReservationId =
+    typeof value.beachReservationId === 'string' && value.beachReservationId.trim()
+      ? value.beachReservationId
+      : undefined;
   const updatedAt = typeof value.updatedAt === 'string' ? value.updatedAt : undefined;
   const reservedDays =
     typeof value.reservedDays === 'number' && Number.isFinite(value.reservedDays)
@@ -196,10 +322,123 @@ function normalizeImportedBed(value: unknown, id: BedId): ExtraBed | null {
     id,
     label: `Bed ${id}`,
     status: value.status,
+    beachReservationId,
     surname: surname || undefined,
     reservedDays,
     updatedAt,
   };
+}
+
+function normalizeImportedBeachReservation(value: unknown): BeachReservation | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const candidate = value as Partial<BeachReservation>;
+  const id = typeof candidate.id === 'string' && candidate.id.trim() ? candidate.id : undefined;
+  const surname = typeof candidate.surname === 'string' ? normalizeSurname(candidate.surname) : '';
+  const reservedDays =
+    typeof candidate.reservedDays === 'number' && Number.isFinite(candidate.reservedDays)
+      ? Math.max(1, Math.floor(candidate.reservedDays))
+      : undefined;
+  const notes = typeof candidate.notes === 'string' ? candidate.notes.trim() : undefined;
+  const createdAt =
+    typeof candidate.createdAt === 'string' && candidate.createdAt.trim()
+      ? candidate.createdAt
+      : new Date().toISOString();
+  const updatedAt =
+    typeof candidate.updatedAt === 'string' && candidate.updatedAt.trim() ? candidate.updatedAt : undefined;
+
+  if (!id || !surname || !reservedDays) {
+    return null;
+  }
+
+  return {
+    id,
+    surname,
+    reservedDays,
+    notes: notes || undefined,
+    createdAt,
+    updatedAt,
+  };
+}
+
+function parseBeachReservations(value: unknown): BeachReservation[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.reduce<BeachReservation[]>((reservations, rawReservation) => {
+    const reservation = normalizeImportedBeachReservation(rawReservation);
+
+    if (!reservation || reservations.some((existing) => existing.id === reservation.id)) {
+      return reservations;
+    }
+
+    return [...reservations, reservation];
+  }, []);
+}
+
+function createAquaparkReservation(details: {
+  surname: string;
+  reservedDays: number;
+  notes?: string;
+}): AquaparkReservation {
+  const now = new Date().toISOString();
+
+  return {
+    id: createReservationId('aquapark'),
+    surname: normalizeSurname(details.surname),
+    reservedDays: Math.max(1, Math.floor(details.reservedDays) || 1),
+    notes: details.notes?.trim() || undefined,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function normalizeImportedAquaparkReservation(value: unknown): AquaparkReservation | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const candidate = value as Partial<AquaparkReservation>;
+  const id = typeof candidate.id === 'string' && candidate.id.trim() ? candidate.id : undefined;
+  const surname = typeof candidate.surname === 'string' ? normalizeSurname(candidate.surname) : '';
+  const reservedDays =
+    typeof candidate.reservedDays === 'number' && Number.isFinite(candidate.reservedDays)
+      ? Math.max(1, Math.floor(candidate.reservedDays))
+      : undefined;
+  const createdAt =
+    typeof candidate.createdAt === 'string' && candidate.createdAt.trim()
+      ? candidate.createdAt
+      : new Date().toISOString();
+  const updatedAt =
+    typeof candidate.updatedAt === 'string' && candidate.updatedAt.trim() ? candidate.updatedAt : undefined;
+  const notes = typeof candidate.notes === 'string' ? candidate.notes.trim() : undefined;
+
+  if (!id || !surname || !reservedDays) {
+    return null;
+  }
+
+  return {
+    id,
+    surname,
+    reservedDays,
+    notes: notes || undefined,
+    createdAt,
+    updatedAt,
+  };
+}
+
+function parseAquaparkReservations(value: unknown): AquaparkReservation[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.reduce<AquaparkReservation[]>((reservations, rawReservation) => {
+    const reservation = normalizeImportedAquaparkReservation(rawReservation);
+    return reservation ? [...reservations, reservation] : reservations;
+  }, []);
 }
 
 function parseSets(value: unknown, allowMissingAsFree = false): BeachSetMap | null {
@@ -259,12 +498,101 @@ function parseExtraBeds(value: unknown, allowMissingAsFree = false): ExtraBedMap
   return Object.fromEntries(entries as Array<readonly [BedId, ExtraBed]>) as ExtraBedMap;
 }
 
+function migrateLegacyBeachReservations(
+  sets: BeachSetMap,
+  extraBeds: ExtraBedMap,
+  existingReservations: BeachReservation[],
+): Pick<AppData, 'sets' | 'extraBeds' | 'beachReservations'> {
+  let beachReservations = [...existingReservations];
+  const reservationIds = new Set(beachReservations.map((reservation) => reservation.id));
+
+  function getOrCreateReservation(surname: string, reservedDays: number): BeachReservation {
+    const normalizedSurname = normalizeSurname(surname);
+    const existing = beachReservations.find(
+      (reservation) =>
+        getSurnameKey(reservation.surname) === getSurnameKey(normalizedSurname) &&
+        reservation.reservedDays === reservedDays,
+    );
+
+    if (existing) {
+      return existing;
+    }
+
+    const reservation = createBeachReservation({ surname: normalizedSurname, reservedDays });
+    beachReservations = [...beachReservations, reservation];
+    reservationIds.add(reservation.id);
+    return reservation;
+  }
+
+  const migratedSets = Object.fromEntries(
+    Object.values(sets).map((set) => {
+      if (set.status !== 'reserved') {
+        return [set.id, set];
+      }
+
+      if (set.beachReservationId && reservationIds.has(set.beachReservationId)) {
+        return [set.id, set];
+      }
+
+      if (!set.surname || !set.reservedDays || set.reservedDays < 1) {
+        return [set.id, set];
+      }
+
+      const reservation = getOrCreateReservation(set.surname, set.reservedDays);
+      return [
+        set.id,
+        {
+          ...set,
+          beachReservationId: reservation.id,
+        },
+      ];
+    }),
+  ) as BeachSetMap;
+
+  const migratedBeds = Object.fromEntries(
+    Object.values(extraBeds).map((bed) => {
+      if (bed.status !== 'reserved') {
+        return [bed.id, bed];
+      }
+
+      if (bed.beachReservationId && reservationIds.has(bed.beachReservationId)) {
+        return [bed.id, bed];
+      }
+
+      if (!bed.surname || !bed.reservedDays || bed.reservedDays < 1) {
+        return [bed.id, bed];
+      }
+
+      const reservation = getOrCreateReservation(bed.surname, bed.reservedDays);
+      return [
+        bed.id,
+        {
+          ...bed,
+          beachReservationId: reservation.id,
+        },
+      ];
+    }),
+  ) as ExtraBedMap;
+
+  return {
+    sets: migratedSets,
+    extraBeds: migratedBeds,
+    beachReservations,
+  };
+}
+
 function parseImportedAppData(value: unknown): AppData | null {
   if (!value || typeof value !== 'object') {
     return null;
   }
 
-  const payload = value as Partial<BackupPayload> & { sets?: unknown; extraBeds?: unknown };
+  const payload = value as Partial<BackupPayload> & {
+    sets?: unknown;
+    extraBeds?: unknown;
+    beachReservations?: unknown;
+    savedSurnames?: unknown;
+    aquaparkReservations?: unknown;
+  };
   const sets = payload.sets ? parseSets(payload.sets) : parseSets(value);
 
   if (!sets) {
@@ -277,7 +605,19 @@ function parseImportedAppData(value: unknown): AppData | null {
     return null;
   }
 
-  return { sets, extraBeds };
+  const migratedBeachData = migrateLegacyBeachReservations(
+    sets,
+    extraBeds,
+    parseBeachReservations(payload.beachReservations),
+  );
+
+  return {
+    sets: migratedBeachData.sets,
+    extraBeds: migratedBeachData.extraBeds,
+    beachReservations: migratedBeachData.beachReservations,
+    savedSurnames: normalizeSavedSurnames(payload.savedSurnames),
+    aquaparkReservations: parseAquaparkReservations(payload.aquaparkReservations),
+  };
 }
 
 function loadLegacyStatuses(): BeachSetMap | null {
@@ -305,29 +645,117 @@ function loadSavedAppData(): AppData {
     const saved = window.localStorage.getItem(STORAGE_KEY);
 
     if (saved) {
-      const parsed = JSON.parse(saved) as { sets?: unknown; extraBeds?: unknown };
+      const parsed = JSON.parse(saved) as {
+        sets?: unknown;
+        extraBeds?: unknown;
+        beachReservations?: unknown;
+        savedSurnames?: unknown;
+        aquaparkReservations?: unknown;
+      };
       const sets = parseSets(parsed.sets, true);
       const extraBeds = parsed.extraBeds ? parseExtraBeds(parsed.extraBeds, true) : createFreeExtraBeds();
 
       if (sets && extraBeds) {
-        return { sets, extraBeds };
+        const migratedBeachData = migrateLegacyBeachReservations(
+          sets,
+          extraBeds,
+          parseBeachReservations(parsed.beachReservations),
+        );
+
+        return {
+          sets: migratedBeachData.sets,
+          extraBeds: migratedBeachData.extraBeds,
+          beachReservations: migratedBeachData.beachReservations,
+          savedSurnames: normalizeSavedSurnames(parsed.savedSurnames),
+          aquaparkReservations: parseAquaparkReservations(parsed.aquaparkReservations),
+        };
       }
     }
 
     const legacySaved = window.localStorage.getItem(LEGACY_STORAGE_KEY);
 
     if (legacySaved) {
-      const legacySets = parseSets(JSON.parse(legacySaved), true);
+      const parsed = JSON.parse(legacySaved) as {
+        sets?: unknown;
+        extraBeds?: unknown;
+        beachReservations?: unknown;
+        savedSurnames?: unknown;
+        aquaparkReservations?: unknown;
+      };
+      const legacySets = parsed.sets ? parseSets(parsed.sets, true) : parseSets(parsed, true);
+      const legacyExtraBeds = parsed.extraBeds ? parseExtraBeds(parsed.extraBeds, true) : createFreeExtraBeds();
 
-      if (legacySets) {
-        return { sets: legacySets, extraBeds: createFreeExtraBeds() };
+      if (legacySets && legacyExtraBeds) {
+        const migratedBeachData = migrateLegacyBeachReservations(
+          legacySets,
+          legacyExtraBeds,
+          parseBeachReservations(parsed.beachReservations),
+        );
+
+        return {
+          sets: migratedBeachData.sets,
+          extraBeds: migratedBeachData.extraBeds,
+          beachReservations: migratedBeachData.beachReservations,
+          savedSurnames: normalizeSavedSurnames(parsed.savedSurnames),
+          aquaparkReservations: parseAquaparkReservations(parsed.aquaparkReservations),
+        };
+      }
+    }
+
+    const olderSaved = window.localStorage.getItem(OLDER_STORAGE_KEY);
+
+    if (olderSaved) {
+      const parsed = JSON.parse(olderSaved) as { sets?: unknown; extraBeds?: unknown };
+      const olderSets = parsed.sets ? parseSets(parsed.sets, true) : parseSets(parsed, true);
+      const olderExtraBeds = parsed.extraBeds ? parseExtraBeds(parsed.extraBeds, true) : createFreeExtraBeds();
+
+      if (olderSets && olderExtraBeds) {
+        const migratedBeachData = migrateLegacyBeachReservations(
+          olderSets,
+          olderExtraBeds,
+          [],
+        );
+
+        return {
+          sets: migratedBeachData.sets,
+          extraBeds: migratedBeachData.extraBeds,
+          beachReservations: migratedBeachData.beachReservations,
+          savedSurnames: [],
+          aquaparkReservations: [],
+        };
+      }
+    }
+
+    const oldSaved = window.localStorage.getItem(OLD_STORAGE_KEY);
+
+    if (oldSaved) {
+      const oldSets = parseSets(JSON.parse(oldSaved), true);
+
+      if (oldSets) {
+        const migratedBeachData = migrateLegacyBeachReservations(oldSets, createFreeExtraBeds(), []);
+
+        return {
+          sets: migratedBeachData.sets,
+          extraBeds: migratedBeachData.extraBeds,
+          beachReservations: migratedBeachData.beachReservations,
+          savedSurnames: [],
+          aquaparkReservations: [],
+        };
       }
     }
 
     const oldestSets = loadLegacyStatuses();
 
     if (oldestSets) {
-      return { sets: oldestSets, extraBeds: createFreeExtraBeds() };
+      const migratedBeachData = migrateLegacyBeachReservations(oldestSets, createFreeExtraBeds(), []);
+
+      return {
+        sets: migratedBeachData.sets,
+        extraBeds: migratedBeachData.extraBeds,
+        beachReservations: migratedBeachData.beachReservations,
+        savedSurnames: [],
+        aquaparkReservations: [],
+      };
     }
 
     return defaults;
@@ -345,8 +773,8 @@ function updateSetStatus(set: BeachSet, status: SetStatus, details: Partial<Beac
     status === 'reserved'
       ? { partialNote: undefined }
       : status === 'partial'
-        ? { surname: undefined, reservedDays: undefined }
-        : { surname: undefined, reservedDays: undefined, partialNote: undefined };
+        ? { beachReservationId: undefined, surname: undefined, reservedDays: undefined }
+        : { beachReservationId: undefined, surname: undefined, reservedDays: undefined, partialNote: undefined };
 
   return {
     ...set,
@@ -358,7 +786,8 @@ function updateSetStatus(set: BeachSet, status: SetStatus, details: Partial<Beac
 }
 
 function updateBedStatus(bed: ExtraBed, status: BedStatus, details: Partial<ExtraBed> = {}): ExtraBed {
-  const clearedDetails = status === 'reserved' ? {} : { surname: undefined, reservedDays: undefined };
+  const clearedDetails =
+    status === 'reserved' ? {} : { beachReservationId: undefined, surname: undefined, reservedDays: undefined };
 
   return {
     ...bed,
@@ -371,49 +800,128 @@ function updateBedStatus(bed: ExtraBed, status: BedStatus, details: Partial<Extr
 
 function applyDailyResetToSets(currentSets: BeachSetMap): BeachSetMap {
   return Object.fromEntries(
-    Object.values(currentSets).map((set) => {
-      if (set.status === 'reserved' && set.reservedDays && set.reservedDays > 1) {
-        return [
-          set.id,
-          {
-            ...set,
-            reservedDays: set.reservedDays - 1,
-            updatedAt: new Date().toISOString(),
-          },
-        ];
-      }
-
-      return [set.id, createBeachSet(set.id)];
-    }),
+    Object.values(currentSets).map((set) => [set.id, createBeachSet(set.id)]),
   ) as BeachSetMap;
 }
 
 function applyDailyResetToBeds(currentBeds: ExtraBedMap): ExtraBedMap {
   return Object.fromEntries(
-    Object.values(currentBeds).map((bed) => {
-      if (bed.status === 'reserved' && bed.reservedDays && bed.reservedDays > 1) {
-        return [
-          bed.id,
-          {
-            ...bed,
-            reservedDays: bed.reservedDays - 1,
-            updatedAt: new Date().toISOString(),
-          },
-        ];
-      }
-
-      return [bed.id, createExtraBed(bed.id)];
-    }),
+    Object.values(currentBeds).map((bed) => [bed.id, createExtraBed(bed.id)]),
   ) as ExtraBedMap;
+}
+
+function applyDailyResetToBeachReservations(currentReservations: BeachReservation[]): BeachReservation[] {
+  return currentReservations.flatMap((reservation) => {
+    if (reservation.reservedDays <= 1) {
+      return [];
+    }
+
+    return [
+      {
+        ...reservation,
+        reservedDays: reservation.reservedDays - 1,
+        updatedAt: new Date().toISOString(),
+      },
+    ];
+  });
+}
+
+function applyDailyResetToAquaparkReservations(
+  currentReservations: AquaparkReservation[],
+): AquaparkReservation[] {
+  return currentReservations.flatMap((reservation) => {
+    if (reservation.reservedDays <= 1) {
+      return [];
+    }
+
+    return [
+      {
+        ...reservation,
+        reservedDays: reservation.reservedDays - 1,
+        updatedAt: new Date().toISOString(),
+      },
+    ];
+  });
+}
+
+function formatDate(value?: string) {
+  if (!value) {
+    return 'No date';
+  }
+
+  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(new Date(value));
+}
+
+function formatDaysLeft(days: number) {
+  return days === 1 ? '1 day left' : `${days} days left`;
+}
+
+function findBeachReservationAssignments(
+  reservationId: string,
+  sets: BeachSetMap,
+  extraBeds: ExtraBedMap,
+): BeachAssignment[] {
+  const assignedSets = Object.values(sets)
+    .filter((set) => set.status === 'reserved' && set.beachReservationId === reservationId)
+    .sort((first, second) => first.id - second.id)
+    .map((set) => ({
+      kind: 'set' as const,
+      id: set.id,
+      label: `Set ${set.id}`,
+    }));
+  const assignedBeds = Object.values(extraBeds)
+    .filter((bed) => bed.status === 'reserved' && bed.beachReservationId === reservationId)
+    .sort((first, second) => first.id - second.id)
+    .map((bed) => ({
+      kind: 'bed' as const,
+      id: bed.id,
+      label: bed.label,
+    }));
+
+  return [...assignedSets, ...assignedBeds];
+}
+
+function formatBeachAssignmentLabel(assignments: BeachAssignment[]) {
+  if (!assignments.length) {
+    return 'Not assigned today';
+  }
+
+  const assignmentList = assignments.map((assignment) => assignment.label).join(', ');
+  return assignments.length > 3
+    ? `Assigned to ${assignments.length} items: ${assignmentList}`
+    : `Assigned to ${assignmentList}`;
+}
+
+function getBeachReservations(
+  beachReservations: BeachReservation[],
+  sets: BeachSetMap,
+  extraBeds: ExtraBedMap,
+): ActiveReservationSummary[] {
+  return beachReservations.map((reservation) => {
+    const assignments = findBeachReservationAssignments(reservation.id, sets, extraBeds);
+
+    return {
+      id: reservation.id,
+      surname: reservation.surname,
+      reservedDays: reservation.reservedDays,
+      notes: reservation.notes,
+      assignmentLabel: formatBeachAssignmentLabel(assignments),
+    };
+  }).sort(
+    (first, second) => first.reservedDays - second.reservedDays || first.surname.localeCompare(second.surname),
+  );
 }
 
 function createBackupPayload(appData: AppData): BackupPayload {
   return {
     app: 'Beach Set Manager',
-    version: 3,
+    version: 5,
     exportedAt: new Date().toISOString(),
     sets: appData.sets,
     extraBeds: appData.extraBeds,
+    beachReservations: appData.beachReservations,
+    savedSurnames: appData.savedSurnames,
+    aquaparkReservations: appData.aquaparkReservations,
   };
 }
 
@@ -421,18 +929,41 @@ function App() {
   const initialAppData = useMemo(() => loadSavedAppData(), []);
   const [sets, setSets] = useState<BeachSetMap>(() => initialAppData.sets);
   const [extraBeds, setExtraBeds] = useState<ExtraBedMap>(() => initialAppData.extraBeds);
+  const [beachReservations, setBeachReservations] = useState<BeachReservation[]>(
+    () => initialAppData.beachReservations,
+  );
+  const [savedSurnames, setSavedSurnames] = useState<ReservationSurname[]>(
+    () => initialAppData.savedSurnames,
+  );
+  const [aquaparkReservations, setAquaparkReservations] = useState<AquaparkReservation[]>(
+    () => initialAppData.aquaparkReservations,
+  );
+  const [activeTab, setActiveTab] = useState<TabId>('beach1');
   const [activeEditor, setActiveEditor] = useState<ActiveEditor | null>(null);
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
-  const [jumpValue, setJumpValue] = useState('');
-  const [jumpMessage, setJumpMessage] = useState<string | null>(null);
-  const [highlightedSetId, setHighlightedSetId] = useState<number | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
-  const setCardRefs = useRef<Record<number, HTMLButtonElement | null>>({});
-  const highlightTimer = useRef<number | null>(null);
+  const beachOneRef = useRef<HTMLElement | null>(null);
+  const beachTwoRef = useRef<HTMLElement | null>(null);
+  const bedsRef = useRef<HTMLElement | null>(null);
+  const hasMountedTabScroll = useRef(false);
 
   useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ sets, extraBeds }));
-  }, [sets, extraBeds]);
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ sets, extraBeds, beachReservations, savedSurnames, aquaparkReservations }),
+    );
+  }, [sets, extraBeds, beachReservations, savedSurnames, aquaparkReservations]);
+
+  useEffect(() => {
+    if (!hasMountedTabScroll.current) {
+      hasMountedTabScroll.current = true;
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      scrollToTabSection(activeTab);
+    });
+  }, [activeTab]);
 
   const counts = useMemo(() => {
     return STATUS_ORDER.reduce(
@@ -454,11 +985,37 @@ function App() {
     );
   }, [extraBeds]);
 
+  const beachReservationSummaries = useMemo(
+    () => getBeachReservations(beachReservations, sets, extraBeds),
+    [beachReservations, sets, extraBeds],
+  );
+
   const activeSet = activeEditor?.kind === 'set' ? sets[activeEditor.id] : null;
   const activeBed = activeEditor?.kind === 'bed' ? extraBeds[activeEditor.id] : null;
+  const activeAquaparkReservation =
+    activeEditor?.kind === 'aquapark' && activeEditor.id
+      ? aquaparkReservations.find((reservation) => reservation.id === activeEditor.id) ?? null
+      : null;
 
-  function registerSetRef(setId: number, node: HTMLButtonElement | null) {
-    setCardRefs.current[setId] = node;
+  function scrollToTabSection(tabId: TabId) {
+    if (tabId === 'aquapark') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+
+    const target =
+      tabId === 'beach1' ? beachOneRef.current : tabId === 'beach2' ? beachTwoRef.current : bedsRef.current;
+
+    target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function selectTab(tabId: TabId) {
+    if (tabId === activeTab) {
+      scrollToTabSection(tabId);
+      return;
+    }
+
+    setActiveTab(tabId);
   }
 
   function openSetEditor(setId: number) {
@@ -467,6 +1024,14 @@ function App() {
 
   function openBedEditor(bedId: BedId) {
     setActiveEditor({ kind: 'bed', id: bedId });
+  }
+
+  function openNewAquaparkReservation() {
+    setActiveEditor({ kind: 'aquapark' });
+  }
+
+  function openAquaparkReservation(reservationId: string) {
+    setActiveEditor({ kind: 'aquapark', id: reservationId });
   }
 
   function closeEditor() {
@@ -487,39 +1052,195 @@ function App() {
     }));
   }
 
-  function highlightSet(setId: number) {
-    if (highlightTimer.current) {
-      window.clearTimeout(highlightTimer.current);
-    }
-
-    setHighlightedSetId(setId);
-    highlightTimer.current = window.setTimeout(() => {
-      setHighlightedSetId(null);
-      highlightTimer.current = null;
-    }, 1700);
+  function getCurrentSetReservationName(set: BeachSet) {
+    const reservation = getLinkedBeachReservation(set.beachReservationId, beachReservations);
+    return reservation?.surname || set.surname || 'another reservation';
   }
 
-  function jumpToSet(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const setId = Number(jumpValue);
+  function getCurrentBedReservationName(bed: ExtraBed) {
+    const reservation = getLinkedBeachReservation(bed.beachReservationId, beachReservations);
+    return reservation?.surname || bed.surname || 'another reservation';
+  }
 
-    if (!Number.isInteger(setId) || setId < 1 || setId > TOTAL_SETS) {
-      setJumpMessage('Enter a set number from 1 to 56.');
+  function confirmItemReservationReplacement(currentSurname: string, nextSurname: string) {
+    return window.confirm(`This item is already assigned to ${currentSurname}. Replace with ${nextSurname}?`);
+  }
+
+  function setBeachReservationAssignment(setId: number, reservation: BeachReservation) {
+    setSets((currentSets) => ({
+      ...currentSets,
+      [setId]: updateSetStatus(currentSets[setId], 'reserved', {
+        beachReservationId: reservation.id,
+        surname: reservation.surname,
+        reservedDays: reservation.reservedDays,
+      }),
+    }));
+    closeEditor();
+  }
+
+  function setBedReservationAssignment(bedId: BedId, reservation: BeachReservation) {
+    setExtraBeds((currentBeds) => ({
+      ...currentBeds,
+      [bedId]: updateBedStatus(currentBeds[bedId], 'reserved', {
+        beachReservationId: reservation.id,
+        surname: reservation.surname,
+        reservedDays: reservation.reservedDays,
+      }),
+    }));
+    closeEditor();
+  }
+
+  function assignBeachReservationToSet(setId: number, reservation: BeachReservation) {
+    const currentSet = sets[setId];
+
+    if (currentSet.status === 'reserved' && currentSet.beachReservationId === reservation.id) {
+      closeEditor();
       return;
     }
 
-    setJumpMessage(`Jumped to Set ${setId}.`);
-    window.requestAnimationFrame(() => {
-      const card = setCardRefs.current[setId];
-      card?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      card?.focus({ preventScroll: true });
-      highlightSet(setId);
-    });
+    if (
+      currentSet.status === 'reserved' &&
+      !confirmItemReservationReplacement(getCurrentSetReservationName(currentSet), reservation.surname)
+    ) {
+      return;
+    }
+
+    setBeachReservationAssignment(setId, reservation);
+  }
+
+  function assignBeachReservationToBed(bedId: BedId, reservation: BeachReservation) {
+    const currentBed = extraBeds[bedId];
+
+    if (currentBed.status === 'reserved' && currentBed.beachReservationId === reservation.id) {
+      closeEditor();
+      return;
+    }
+
+    if (
+      currentBed.status === 'reserved' &&
+      !confirmItemReservationReplacement(getCurrentBedReservationName(currentBed), reservation.surname)
+    ) {
+      return;
+    }
+
+    setBedReservationAssignment(bedId, reservation);
+  }
+
+  function createAndAssignBeachReservationToSet(
+    setId: number,
+    details: BeachReservationDetails,
+  ) {
+    const surname = normalizeSurname(details.surname);
+    const currentSet = sets[setId];
+
+    if (!surname) {
+      return;
+    }
+
+    if (
+      currentSet.status === 'reserved' &&
+      !confirmItemReservationReplacement(getCurrentSetReservationName(currentSet), surname)
+    ) {
+      return;
+    }
+
+    const reservation = createBeachReservation({ ...details, surname });
+    saveReservationSurname(reservation.surname);
+    setBeachReservations((currentReservations) => [reservation, ...currentReservations]);
+    setBeachReservationAssignment(setId, reservation);
+  }
+
+  function createAndAssignBeachReservationToBed(
+    bedId: BedId,
+    details: BeachReservationDetails,
+  ) {
+    const surname = normalizeSurname(details.surname);
+    const currentBed = extraBeds[bedId];
+
+    if (!surname) {
+      return;
+    }
+
+    if (
+      currentBed.status === 'reserved' &&
+      !confirmItemReservationReplacement(getCurrentBedReservationName(currentBed), surname)
+    ) {
+      return;
+    }
+
+    const reservation = createBeachReservation({ ...details, surname });
+    saveReservationSurname(reservation.surname);
+    setBeachReservations((currentReservations) => [reservation, ...currentReservations]);
+    setBedReservationAssignment(bedId, reservation);
+  }
+
+  function saveReservationSurname(surname: string) {
+    setSavedSurnames((currentSurnames) => upsertSavedSurname(currentSurnames, surname));
+  }
+
+  function deleteSavedSurname(surname: string) {
+    setSavedSurnames((currentSurnames) =>
+      currentSurnames.filter((savedSurname) => getSurnameKey(savedSurname) !== getSurnameKey(surname)),
+    );
+  }
+
+  function saveAquaparkReservation(
+    reservationId: string | undefined,
+    details: { surname: string; reservedDays: number; notes?: string },
+  ) {
+    const surname = normalizeSurname(details.surname);
+
+    if (!surname) {
+      return;
+    }
+
+    saveReservationSurname(surname);
+
+    if (!reservationId) {
+      setAquaparkReservations((currentReservations) => [
+        createAquaparkReservation({ ...details, surname }),
+        ...currentReservations,
+      ]);
+      closeEditor();
+      return;
+    }
+
+    setAquaparkReservations((currentReservations) =>
+      currentReservations.map((reservation) =>
+        reservation.id === reservationId
+          ? {
+              ...reservation,
+              surname,
+              reservedDays: Math.max(1, Math.floor(details.reservedDays) || 1),
+              notes: details.notes?.trim() || undefined,
+              updatedAt: new Date().toISOString(),
+            }
+          : reservation,
+      ),
+    );
+    closeEditor();
+  }
+
+  function deleteAquaparkReservation(reservationId: string) {
+    const confirmed = window.confirm('Cancel this Aquapark reservation?');
+
+    if (confirmed) {
+      setAquaparkReservations((currentReservations) =>
+        currentReservations.filter((reservation) => reservation.id !== reservationId),
+      );
+      closeEditor();
+    }
   }
 
   function exportBackup() {
     const today = new Date().toISOString().slice(0, 10);
-    const payload = createBackupPayload({ sets, extraBeds });
+    const payload = createBackupPayload({
+      sets,
+      extraBeds,
+      beachReservations,
+      savedSurnames,
+      aquaparkReservations,
+    });
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -558,6 +1279,9 @@ function App() {
       if (confirmed) {
         setSets(imported.sets);
         setExtraBeds(imported.extraBeds);
+        setBeachReservations(imported.beachReservations);
+        setSavedSurnames(imported.savedSurnames);
+        setAquaparkReservations(imported.aquaparkReservations);
         closeEditor();
         setBackupMessage('Backup imported.');
       }
@@ -573,12 +1297,15 @@ function App() {
   function resetDay() {
     const confirmed = window.confirm(
       [
-        'Daily Reset will update all 56 sets and 4 extra beds.',
+        'Daily Reset will update all 56 sets, 4 extra beds, and Aquapark reservations.',
         '',
         '- Paid sets and beds become free.',
         '- Partial sets become free.',
-        '- Reservations lose 1 reserved day.',
-        '- Reservations with 1 day left become free.',
+        '- Beach set and bed assignments are cleared.',
+        '- Saved Beach reservations lose 1 reserved day.',
+        '- Beach reservations with 1 day left are removed.',
+        '- Aquapark reservations lose 1 reserved day.',
+        '- Aquapark reservations with 1 day left are removed.',
         '',
         'Continue?',
       ].join('\n'),
@@ -587,6 +1314,8 @@ function App() {
     if (confirmed) {
       setSets((currentSets) => applyDailyResetToSets(currentSets));
       setExtraBeds((currentBeds) => applyDailyResetToBeds(currentBeds));
+      setBeachReservations((currentReservations) => applyDailyResetToBeachReservations(currentReservations));
+      setAquaparkReservations((currentReservations) => applyDailyResetToAquaparkReservations(currentReservations));
       closeEditor();
       setBackupMessage('Daily reset complete.');
     }
@@ -601,6 +1330,9 @@ function App() {
       APP_STORAGE_KEYS.forEach((key) => window.localStorage.removeItem(key));
       setSets(createFreeBeachSets());
       setExtraBeds(createFreeExtraBeds());
+      setBeachReservations([]);
+      setSavedSurnames([]);
+      setAquaparkReservations([]);
       closeEditor();
       setBackupMessage('All app data cleared.');
     }
@@ -617,43 +1349,6 @@ function App() {
           Daily Reset
         </button>
       </header>
-
-      <section className="jump-panel" aria-label="Jump to a set">
-        <form className="jump-form" onSubmit={jumpToSet}>
-          <input
-            type="number"
-            inputMode="numeric"
-            min="1"
-            max="56"
-            placeholder="Jump to set number"
-            value={jumpValue}
-            onChange={(event) => {
-              setJumpValue(event.target.value);
-              setJumpMessage(null);
-            }}
-          />
-          <button type="submit">Go</button>
-        </form>
-        {jumpMessage ? <p className="jump-message">{jumpMessage}</p> : null}
-      </section>
-
-      <section className="status-strip" aria-label="Current set totals by status">
-        {STATUS_ORDER.map((status) => (
-          <div className={`status-pill status-${status}`} key={status}>
-            <span>{STATUS_META[status].label}</span>
-            <strong>{counts[status]}</strong>
-          </div>
-        ))}
-      </section>
-
-      <section className="legend" aria-label="Status color legend">
-        {STATUS_ORDER.map((status) => (
-          <span className={`legend-item status-${status}`} key={status}>
-            <span className="legend-dot" />
-            {STATUS_META[status].label}
-          </span>
-        ))}
-      </section>
 
       <details className="local-tools">
         <summary>Backups and local tools</summary>
@@ -677,54 +1372,119 @@ function App() {
         <button type="button" className="danger-link" onClick={resetAppData}>
           Reset app data
         </button>
+        <SavedSurnamesManager savedSurnames={savedSurnames} onDeleteSurname={deleteSavedSurname} />
       </details>
 
-      <BeachOne
-        sets={sets}
-        highlightedSetId={highlightedSetId}
-        onEditSet={openSetEditor}
-        onRegisterSetRef={registerSetRef}
-      />
-      <BeachTwo
-        sets={sets}
-        highlightedSetId={highlightedSetId}
-        onEditSet={openSetEditor}
-        onRegisterSetRef={registerSetRef}
-      />
-      <ExtraBedsSection beds={extraBeds} counts={bedCounts} onEditBed={openBedEditor} />
+      {activeTab === 'aquapark' ? (
+        <AquaparkPage
+          reservations={aquaparkReservations}
+          onCreateReservation={openNewAquaparkReservation}
+          onEditReservation={openAquaparkReservation}
+          onDeleteReservation={deleteAquaparkReservation}
+        />
+      ) : (
+        <>
+          <ActiveReservationsSection reservations={beachReservationSummaries} />
+
+          <section className="status-strip" aria-label="Current set totals by status">
+            {STATUS_ORDER.map((status) => (
+              <div className={`status-pill status-${status}`} key={status}>
+                <span>{STATUS_META[status].label}</span>
+                <strong>{counts[status]}</strong>
+              </div>
+            ))}
+          </section>
+
+          <section className="legend" aria-label="Status color legend">
+            {STATUS_ORDER.map((status) => (
+              <span className={`legend-item status-${status}`} key={status}>
+                <span className="legend-dot" />
+                {STATUS_META[status].label}
+              </span>
+            ))}
+          </section>
+
+          <BeachOne
+            sectionRef={beachOneRef}
+            sets={sets}
+            beachReservations={beachReservations}
+            onEditSet={openSetEditor}
+          />
+          <BeachTwo
+            sectionRef={beachTwoRef}
+            sets={sets}
+            beachReservations={beachReservations}
+            onEditSet={openSetEditor}
+          />
+          <ExtraBedsSection
+            sectionRef={bedsRef}
+            beds={extraBeds}
+            beachReservations={beachReservations}
+            counts={bedCounts}
+            onEditBed={openBedEditor}
+          />
+        </>
+      )}
 
       {activeSet ? (
         <SetEditorModal
           set={activeSet}
+          beachReservations={beachReservations}
+          beachReservationAssignments={getBeachReservations(beachReservations, sets, extraBeds)}
+          savedSurnames={savedSurnames}
           onClose={closeEditor}
           onSave={(status, details) => saveSet(activeSet.id, status, details)}
+          onAssignReservation={(reservation) => assignBeachReservationToSet(activeSet.id, reservation)}
+          onCreateReservation={(details) => createAndAssignBeachReservationToSet(activeSet.id, details)}
         />
       ) : null}
 
       {activeBed ? (
         <BedEditorModal
           bed={activeBed}
+          beachReservations={beachReservations}
+          beachReservationAssignments={getBeachReservations(beachReservations, sets, extraBeds)}
+          savedSurnames={savedSurnames}
           onClose={closeEditor}
           onSave={(status, details) => saveBed(activeBed.id, status, details)}
+          onAssignReservation={(reservation) => assignBeachReservationToBed(activeBed.id, reservation)}
+          onCreateReservation={(details) => createAndAssignBeachReservationToBed(activeBed.id, details)}
         />
       ) : null}
+
+      {activeEditor?.kind === 'aquapark' ? (
+        <AquaparkReservationModal
+          reservation={activeAquaparkReservation}
+          savedSurnames={savedSurnames}
+          onClose={closeEditor}
+          onSave={(details) => saveAquaparkReservation(activeEditor.id, details)}
+        />
+      ) : null}
+
+      <BottomTabs activeTab={activeTab} onSelectTab={selectTab} />
     </main>
   );
 }
 
 function BeachOne({
+  sectionRef,
   sets,
-  highlightedSetId,
+  beachReservations,
   onEditSet,
-  onRegisterSetRef,
 }: {
+  sectionRef: MutableRefObject<HTMLElement | null>;
   sets: BeachSetMap;
-  highlightedSetId: number | null;
+  beachReservations: BeachReservation[];
   onEditSet: (setNumber: number) => void;
-  onRegisterSetRef: (setNumber: number, node: HTMLButtonElement | null) => void;
 }) {
   return (
-    <section className="beach-section beach-one" aria-labelledby="beach-one-heading">
+    <section
+      ref={(node) => {
+        sectionRef.current = node;
+      }}
+      className="beach-section beach-one"
+      aria-labelledby="beach-one-heading"
+    >
       <BeachHeader
         title="Beach 1"
         subtitle="Sets 1-20"
@@ -739,17 +1499,15 @@ function BeachOne({
             label="Upper Row"
             sets={BEACH_ONE_UPPER_ROW}
             beachSets={sets}
-            highlightedSetId={highlightedSetId}
+            beachReservations={beachReservations}
             onEditSet={onEditSet}
-            onRegisterSetRef={onRegisterSetRef}
           />
           <SetRow
             label="Lower Row"
             sets={BEACH_ONE_LOWER_ROW}
             beachSets={sets}
-            highlightedSetId={highlightedSetId}
+            beachReservations={beachReservations}
             onEditSet={onEditSet}
-            onRegisterSetRef={onRegisterSetRef}
           />
         </div>
       </div>
@@ -758,18 +1516,24 @@ function BeachOne({
 }
 
 function BeachTwo({
+  sectionRef,
   sets,
-  highlightedSetId,
+  beachReservations,
   onEditSet,
-  onRegisterSetRef,
 }: {
+  sectionRef: MutableRefObject<HTMLElement | null>;
   sets: BeachSetMap;
-  highlightedSetId: number | null;
+  beachReservations: BeachReservation[];
   onEditSet: (setNumber: number) => void;
-  onRegisterSetRef: (setNumber: number, node: HTMLButtonElement | null) => void;
 }) {
   return (
-    <section className="beach-section beach-two" aria-labelledby="beach-two-heading">
+    <section
+      ref={(node) => {
+        sectionRef.current = node;
+      }}
+      className="beach-section beach-two"
+      aria-labelledby="beach-two-heading"
+    >
       <BeachHeader title="Beach 2" subtitle="Sets 21-56" summary="One long promenade from 21 to 56" />
       <div className="beach-two-path beach-map" aria-label="Beach 2 long beach path">
         <span className="path-cue start-cue">Start: Set 21</span>
@@ -779,9 +1543,8 @@ function BeachTwo({
             <SetCard
               key={setNumber}
               beachSet={sets[setNumber]}
-              isHighlighted={highlightedSetId === setNumber}
+              beachReservations={beachReservations}
               onEdit={onEditSet}
-              onRegister={onRegisterSetRef}
             />
           ))}
         </div>
@@ -815,16 +1578,14 @@ function SetRow({
   label,
   sets,
   beachSets,
-  highlightedSetId,
+  beachReservations,
   onEditSet,
-  onRegisterSetRef,
 }: {
   label: string;
   sets: number[];
   beachSets: BeachSetMap;
-  highlightedSetId: number | null;
+  beachReservations: BeachReservation[];
   onEditSet: (setNumber: number) => void;
-  onRegisterSetRef: (setNumber: number, node: HTMLButtonElement | null) => void;
 }) {
   return (
     <section className="beach-row-column">
@@ -834,9 +1595,8 @@ function SetRow({
           <SetCard
             key={setNumber}
             beachSet={beachSets[setNumber]}
-            isHighlighted={highlightedSetId === setNumber}
+            beachReservations={beachReservations}
             onEdit={onEditSet}
-            onRegister={onRegisterSetRef}
           />
         ))}
       </div>
@@ -846,14 +1606,12 @@ function SetRow({
 
 function SetCard({
   beachSet,
-  isHighlighted,
+  beachReservations,
   onEdit,
-  onRegister,
 }: {
   beachSet: BeachSet;
-  isHighlighted: boolean;
+  beachReservations: BeachReservation[];
   onEdit: (setNumber: number) => void;
-  onRegister: (setNumber: number, node: HTMLButtonElement | null) => void;
 }) {
   const longPressTimer = useRef<number | null>(null);
 
@@ -874,8 +1632,7 @@ function SetCard({
 
   return (
     <button
-      ref={(node) => onRegister(beachSet.id, node)}
-      className={`set-card status-${beachSet.status}${isHighlighted ? ' set-card-highlight' : ''}`}
+      className={`set-card status-${beachSet.status}`}
       type="button"
       onClick={() => onEdit(beachSet.id)}
       onDoubleClick={() => onEdit(beachSet.id)}
@@ -887,22 +1644,32 @@ function SetCard({
     >
       <span className="set-number">Set {beachSet.id}</span>
       <SetIcon status={beachSet.status} />
-      <SetDetails beachSet={beachSet} />
+      <SetDetails beachSet={beachSet} beachReservations={beachReservations} />
     </button>
   );
 }
 
 function ExtraBedsSection({
+  sectionRef,
   beds,
+  beachReservations,
   counts,
   onEditBed,
 }: {
+  sectionRef: MutableRefObject<HTMLElement | null>;
   beds: ExtraBedMap;
+  beachReservations: BeachReservation[];
   counts: Record<BedStatus, number>;
   onEditBed: (bedId: BedId) => void;
 }) {
   return (
-    <section className="beach-section extra-beds-section" aria-labelledby="extra-beds-heading">
+    <section
+      ref={(node) => {
+        sectionRef.current = node;
+      }}
+      className="beach-section extra-beds-section"
+      aria-labelledby="extra-beds-heading"
+    >
       <div className="beach-header">
         <div>
           <p className="eyebrow">Separate from sets 1-56</p>
@@ -921,14 +1688,22 @@ function ExtraBedsSection({
 
       <div className="extra-beds-grid">
         {EXTRA_BED_IDS.map((bedId) => (
-          <BedCard key={bedId} bed={beds[bedId]} onEdit={onEditBed} />
+          <BedCard key={bedId} bed={beds[bedId]} beachReservations={beachReservations} onEdit={onEditBed} />
         ))}
       </div>
     </section>
   );
 }
 
-function BedCard({ bed, onEdit }: { bed: ExtraBed; onEdit: (bedId: BedId) => void }) {
+function BedCard({
+  bed,
+  beachReservations,
+  onEdit,
+}: {
+  bed: ExtraBed;
+  beachReservations: BeachReservation[];
+  onEdit: (bedId: BedId) => void;
+}) {
   return (
     <button
       className={`bed-card status-${bed.status}`}
@@ -938,12 +1713,221 @@ function BedCard({ bed, onEdit }: { bed: ExtraBed; onEdit: (bedId: BedId) => voi
     >
       <span className="set-number">{bed.label}</span>
       <BedIcon />
-      <BedDetails bed={bed} />
+      <BedDetails bed={bed} beachReservations={beachReservations} />
     </button>
   );
 }
 
-function SetDetails({ beachSet }: { beachSet: BeachSet }) {
+function ActiveReservationsSection({ reservations }: { reservations: ActiveReservationSummary[] }) {
+  return (
+    <section className="active-reservations" aria-labelledby="active-reservations-heading">
+      <div className="active-reservations-header">
+        <div>
+          <p className="eyebrow">Reserved now</p>
+          <h2 id="active-reservations-heading">Beach Reservations ({reservations.length})</h2>
+        </div>
+      </div>
+
+      {reservations.length ? (
+        <div className="active-reservation-list">
+          {reservations.map((reservation) => (
+            <article className="active-reservation-card" key={reservation.id}>
+              <div className="active-reservation-meta">
+                <span>{reservation.assignmentLabel}</span>
+              </div>
+              <strong>{reservation.surname}</strong>
+              <span className="active-days">{formatDaysLeft(reservation.reservedDays)}</span>
+              {reservation.notes ? <small className="active-reservation-notes">{reservation.notes}</small> : null}
+            </article>
+          ))}
+        </div>
+      ) : (
+        <p className="no-active-reservations">No active reservations.</p>
+      )}
+    </section>
+  );
+}
+
+function SurnameInput({
+  inputId,
+  value,
+  savedSurnames,
+  onChange,
+}: {
+  inputId: string;
+  value: string;
+  savedSurnames: ReservationSurname[];
+  onChange: (value: string) => void;
+}) {
+  const listId = `${inputId}-options`;
+
+  return (
+    <label>
+      Customer surname
+      <input
+        id={inputId}
+        type="text"
+        value={value}
+        list={savedSurnames.length ? listId : undefined}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder="e.g. Novak"
+        autoComplete="family-name"
+      />
+      {savedSurnames.length ? (
+        <datalist id={listId}>
+          {savedSurnames.map((savedSurname) => (
+            <option value={savedSurname} key={savedSurname} />
+          ))}
+        </datalist>
+      ) : null}
+    </label>
+  );
+}
+
+function SavedSurnamesManager({
+  savedSurnames,
+  onDeleteSurname,
+}: {
+  savedSurnames: ReservationSurname[];
+  onDeleteSurname: (surname: string) => void;
+}) {
+  return (
+    <section className="saved-surnames" aria-label="Saved reservation surnames">
+      <h3>Saved surnames</h3>
+      {savedSurnames.length ? (
+        <div className="surname-chip-list">
+          {savedSurnames.map((surname) => (
+            <span className="surname-chip" key={surname}>
+              {surname}
+              <button type="button" onClick={() => onDeleteSurname(surname)} aria-label={`Delete ${surname}`}>
+                Remove
+              </button>
+            </span>
+          ))}
+        </div>
+      ) : (
+        <p>No saved surnames yet.</p>
+      )}
+    </section>
+  );
+}
+
+function AquaparkPage({
+  reservations,
+  onCreateReservation,
+  onEditReservation,
+  onDeleteReservation,
+}: {
+  reservations: AquaparkReservation[];
+  onCreateReservation: () => void;
+  onEditReservation: (reservationId: string) => void;
+  onDeleteReservation: (reservationId: string) => void;
+}) {
+  return (
+    <section className="aquapark-page" aria-labelledby="aquapark-heading">
+      <div className="aquapark-hero">
+        <div>
+          <p className="eyebrow">Multi-day reservations</p>
+          <h2 id="aquapark-heading">Aquapark</h2>
+        </div>
+        <button type="button" className="aquapark-primary-button" onClick={onCreateReservation}>
+          New Aquapark Reservation
+        </button>
+      </div>
+
+      {reservations.length ? (
+        <div className="aquapark-reservation-list">
+          {reservations.map((reservation) => (
+            <AquaparkReservationCard
+              key={reservation.id}
+              reservation={reservation}
+              onEdit={onEditReservation}
+              onDelete={onDeleteReservation}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="empty-aquapark">
+          <strong>No active Aquapark reservations</strong>
+          <span>New reservations will stay saved on this phone/browser.</span>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function AquaparkReservationCard({
+  reservation,
+  onEdit,
+  onDelete,
+}: {
+  reservation: AquaparkReservation;
+  onEdit: (reservationId: string) => void;
+  onDelete: (reservationId: string) => void;
+}) {
+  return (
+    <article className="aquapark-card">
+      <div className="aquapark-card-main">
+        <div>
+          <p className="eyebrow">Reservation</p>
+          <h3>{reservation.surname}</h3>
+        </div>
+        <span className="days-badge">{formatDays(reservation.reservedDays)}</span>
+      </div>
+      {reservation.notes ? <p className="aquapark-notes">{reservation.notes}</p> : null}
+      <p className="aquapark-date">
+        {reservation.updatedAt ? `Updated ${formatDate(reservation.updatedAt)}` : `Created ${formatDate(reservation.createdAt)}`}
+      </p>
+      <div className="aquapark-card-actions">
+        <button type="button" onClick={() => onEdit(reservation.id)}>
+          Edit
+        </button>
+        <button type="button" className="danger-link" onClick={() => onDelete(reservation.id)}>
+          Delete
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function BottomTabs({
+  activeTab,
+  onSelectTab,
+}: {
+  activeTab: TabId;
+  onSelectTab: (tabId: TabId) => void;
+}) {
+  const tabs: Array<{ id: TabId; label: string }> = [
+    { id: 'beach1', label: 'Beach 1' },
+    { id: 'beach2', label: 'Beach 2' },
+    { id: 'beds', label: 'Beds' },
+    { id: 'aquapark', label: 'Aquapark' },
+  ];
+
+  return (
+    <nav className="bottom-tabs" aria-label="Main app sections">
+      {tabs.map((tab) => (
+        <button
+          type="button"
+          className={`bottom-tab tab-${tab.id}${activeTab === tab.id ? ' active' : ''}`}
+          onClick={() => onSelectTab(tab.id)}
+          aria-current={activeTab === tab.id ? 'page' : undefined}
+          key={tab.id}
+        >
+          {tab.label}
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+function SetDetails({
+  beachSet,
+  beachReservations,
+}: {
+  beachSet: BeachSet;
+  beachReservations: BeachReservation[];
+}) {
   if (beachSet.status === 'paid') {
     return (
       <span className="card-detail">
@@ -954,11 +1938,13 @@ function SetDetails({ beachSet }: { beachSet: BeachSet }) {
   }
 
   if (beachSet.status === 'reserved') {
+    const reservation = getLinkedBeachReservation(beachSet.beachReservationId, beachReservations);
+
     return (
       <span className="card-detail">
         <strong>Reserved</strong>
-        <small>{beachSet.surname || 'No surname'}</small>
-        <small>{formatDays(beachSet.reservedDays)}</small>
+        <small>{reservation?.surname || beachSet.surname || 'Missing reservation'}</small>
+        <small>{formatDays(reservation?.reservedDays ?? beachSet.reservedDays)}</small>
       </span>
     );
   }
@@ -980,7 +1966,7 @@ function SetDetails({ beachSet }: { beachSet: BeachSet }) {
   );
 }
 
-function BedDetails({ bed }: { bed: ExtraBed }) {
+function BedDetails({ bed, beachReservations }: { bed: ExtraBed; beachReservations: BeachReservation[] }) {
   if (bed.status === 'paid') {
     return (
       <span className="card-detail">
@@ -991,11 +1977,13 @@ function BedDetails({ bed }: { bed: ExtraBed }) {
   }
 
   if (bed.status === 'reserved') {
+    const reservation = getLinkedBeachReservation(bed.beachReservationId, beachReservations);
+
     return (
       <span className="card-detail">
         <strong>Reserved</strong>
-        <small>{bed.surname || 'No surname'}</small>
-        <small>{formatDays(bed.reservedDays)}</small>
+        <small>{reservation?.surname || bed.surname || 'Missing reservation'}</small>
+        <small>{formatDays(reservation?.reservedDays ?? bed.reservedDays)}</small>
       </span>
     );
   }
@@ -1016,30 +2004,194 @@ function formatDays(days?: number) {
   return days === 1 ? '1 day' : `${days} days`;
 }
 
+function getLinkedBeachReservation(
+  beachReservationId: string | undefined,
+  beachReservations: BeachReservation[],
+) {
+  return beachReservationId
+    ? beachReservations.find((reservation) => reservation.id === beachReservationId) ?? null
+    : null;
+}
+
+function BeachReservationAssignmentPanel({
+  itemLabel,
+  currentBeachReservationId,
+  beachReservations,
+  beachReservationAssignments,
+  savedSurnames,
+  inputIdPrefix,
+  onAssignReservation,
+  onCreateReservation,
+}: {
+  itemLabel: string;
+  currentBeachReservationId?: string;
+  beachReservations: BeachReservation[];
+  beachReservationAssignments: ActiveReservationSummary[];
+  savedSurnames: ReservationSurname[];
+  inputIdPrefix: string;
+  onAssignReservation: (reservation: BeachReservation) => void;
+  onCreateReservation: (details: BeachReservationDetails) => void;
+}) {
+  const [assignmentMode, setAssignmentMode] = useState<'existing' | 'new'>(
+    beachReservations.length ? 'existing' : 'new',
+  );
+  const [selectedReservationId, setSelectedReservationId] = useState(
+    currentBeachReservationId ?? beachReservations[0]?.id ?? '',
+  );
+  const [surname, setSurname] = useState('');
+  const [reservedDays, setReservedDays] = useState('1');
+  const [notes, setNotes] = useState('');
+  const canCreateReservation = normalizeSurname(surname).length > 0;
+
+  function getAssignmentLabel(reservationId: string) {
+    return (
+      beachReservationAssignments.find((assignment) => assignment.id === reservationId)?.assignmentLabel ??
+      'Not assigned today'
+    );
+  }
+
+  function formatReservationOption(reservation: BeachReservation) {
+    return `${reservation.surname} - ${formatDaysLeft(reservation.reservedDays)} - ${getAssignmentLabel(
+      reservation.id,
+    )}`;
+  }
+
+  function assignExistingReservation() {
+    const reservation = beachReservations.find((candidate) => candidate.id === selectedReservationId);
+
+    if (reservation) {
+      onAssignReservation(reservation);
+    }
+  }
+
+  function createNewReservation() {
+    if (!canCreateReservation) {
+      return;
+    }
+
+    onCreateReservation({
+      surname,
+      reservedDays: Math.max(1, Number(reservedDays) || 1),
+      notes: notes.trim() || undefined,
+    });
+  }
+
+  return (
+    <div className="detail-panel reservation-assignment-panel">
+      <p className="assignment-helper">
+        Assign a saved Beach reservation to {itemLabel}, or create a new one for today.
+      </p>
+
+      <div className="quick-options reservation-mode-options" aria-label="Beach reservation options">
+        <button
+          type="button"
+          className={assignmentMode === 'existing' ? 'quick-option selected reserved-choice' : 'quick-option'}
+          onClick={() => setAssignmentMode('existing')}
+          disabled={!beachReservations.length}
+        >
+          Choose existing beach reservation
+        </button>
+        <button
+          type="button"
+          className={assignmentMode === 'new' ? 'quick-option selected reserved-choice' : 'quick-option'}
+          onClick={() => setAssignmentMode('new')}
+        >
+          Create new beach reservation
+        </button>
+      </div>
+
+      {assignmentMode === 'existing' && beachReservations.length ? (
+        <>
+          <label>
+            Active beach reservations
+            <select
+              value={selectedReservationId}
+              onChange={(event) => setSelectedReservationId(event.target.value)}
+            >
+              {beachReservations.map((reservation) => (
+                <option value={reservation.id} key={reservation.id}>
+                  {formatReservationOption(reservation)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="button"
+            className="sheet-button reserved-action"
+            onClick={assignExistingReservation}
+            disabled={!selectedReservationId}
+          >
+            Assign Existing Reservation
+          </button>
+        </>
+      ) : null}
+
+      {assignmentMode === 'new' ? (
+        <>
+          <SurnameInput
+            inputId={`${inputIdPrefix}-surname`}
+            value={surname}
+            savedSurnames={savedSurnames}
+            onChange={setSurname}
+          />
+          <label>
+            Reserved days
+            <input
+              type="number"
+              inputMode="numeric"
+              min="1"
+              value={reservedDays}
+              onChange={(event) => setReservedDays(event.target.value)}
+            />
+          </label>
+          <label>
+            Notes
+            <textarea
+              value={notes}
+              onChange={(event) => setNotes(event.target.value)}
+              rows={3}
+              placeholder="Optional"
+            />
+          </label>
+          <button
+            type="button"
+            className="sheet-button reserved-action"
+            onClick={createNewReservation}
+            disabled={!canCreateReservation}
+          >
+            Create and Assign Reservation
+          </button>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
 function SetEditorModal({
   set,
+  beachReservations,
+  beachReservationAssignments,
+  savedSurnames,
   onClose,
   onSave,
+  onAssignReservation,
+  onCreateReservation,
 }: {
   set: BeachSet;
+  beachReservations: BeachReservation[];
+  beachReservationAssignments: ActiveReservationSummary[];
+  savedSurnames: ReservationSurname[];
   onClose: () => void;
   onSave: (status: SetStatus, details?: Partial<BeachSet>) => void;
+  onAssignReservation: (reservation: BeachReservation) => void;
+  onCreateReservation: (details: BeachReservationDetails) => void;
 }) {
   const [mode, setMode] = useState<DetailMode>('actions');
-  const [surname, setSurname] = useState(set.surname ?? '');
-  const [reservedDays, setReservedDays] = useState(String(set.reservedDays ?? 1));
   const [partialNote, setPartialNote] = useState(set.partialNote ?? PARTIAL_OPTIONS[0]);
 
   function saveAndClose(status: SetStatus, details?: Partial<BeachSet>) {
     onSave(status, details);
     onClose();
-  }
-
-  function saveReservation() {
-    saveAndClose('reserved', {
-      surname: surname.trim() || undefined,
-      reservedDays: Math.max(1, Number(reservedDays) || 1),
-    });
   }
 
   function savePartial() {
@@ -1089,31 +2241,16 @@ function SetEditorModal({
         </div>
 
         {mode === 'reserved' ? (
-          <div className="detail-panel">
-            <label>
-              Customer surname
-              <input
-                type="text"
-                value={surname}
-                onChange={(event) => setSurname(event.target.value)}
-                placeholder="e.g. Novak"
-                autoComplete="family-name"
-              />
-            </label>
-            <label>
-              Reserved days
-              <input
-                type="number"
-                inputMode="numeric"
-                min="1"
-                value={reservedDays}
-                onChange={(event) => setReservedDays(event.target.value)}
-              />
-            </label>
-            <button type="button" className="sheet-button reserved-action" onClick={saveReservation}>
-              Save Reservation
-            </button>
-          </div>
+          <BeachReservationAssignmentPanel
+            itemLabel={`Set ${set.id}`}
+            currentBeachReservationId={set.beachReservationId}
+            beachReservations={beachReservations}
+            beachReservationAssignments={beachReservationAssignments}
+            savedSurnames={savedSurnames}
+            inputIdPrefix="set-reservation"
+            onAssignReservation={onAssignReservation}
+            onCreateReservation={onCreateReservation}
+          />
         ) : null}
 
         {mode === 'partial' ? (
@@ -1155,27 +2292,28 @@ function SetEditorModal({
 
 function BedEditorModal({
   bed,
+  beachReservations,
+  beachReservationAssignments,
+  savedSurnames,
   onClose,
   onSave,
+  onAssignReservation,
+  onCreateReservation,
 }: {
   bed: ExtraBed;
+  beachReservations: BeachReservation[];
+  beachReservationAssignments: ActiveReservationSummary[];
+  savedSurnames: ReservationSurname[];
   onClose: () => void;
   onSave: (status: BedStatus, details?: Partial<ExtraBed>) => void;
+  onAssignReservation: (reservation: BeachReservation) => void;
+  onCreateReservation: (details: BeachReservationDetails) => void;
 }) {
   const [mode, setMode] = useState<'actions' | 'reserved'>('actions');
-  const [surname, setSurname] = useState(bed.surname ?? '');
-  const [reservedDays, setReservedDays] = useState(String(bed.reservedDays ?? 1));
 
   function saveAndClose(status: BedStatus, details?: Partial<ExtraBed>) {
     onSave(status, details);
     onClose();
-  }
-
-  function saveReservation() {
-    saveAndClose('reserved', {
-      surname: surname.trim() || undefined,
-      reservedDays: Math.max(1, Number(reservedDays) || 1),
-    });
   }
 
   return (
@@ -1216,32 +2354,111 @@ function BedEditorModal({
         </div>
 
         {mode === 'reserved' ? (
-          <div className="detail-panel">
-            <label>
-              Customer surname
-              <input
-                type="text"
-                value={surname}
-                onChange={(event) => setSurname(event.target.value)}
-                placeholder="e.g. Novak"
-                autoComplete="family-name"
-              />
-            </label>
-            <label>
-              Reserved days
-              <input
-                type="number"
-                inputMode="numeric"
-                min="1"
-                value={reservedDays}
-                onChange={(event) => setReservedDays(event.target.value)}
-              />
-            </label>
-            <button type="button" className="sheet-button reserved-action" onClick={saveReservation}>
-              Save Reservation
-            </button>
-          </div>
+          <BeachReservationAssignmentPanel
+            itemLabel={bed.label}
+            currentBeachReservationId={bed.beachReservationId}
+            beachReservations={beachReservations}
+            beachReservationAssignments={beachReservationAssignments}
+            savedSurnames={savedSurnames}
+            inputIdPrefix="bed-reservation"
+            onAssignReservation={onAssignReservation}
+            onCreateReservation={onCreateReservation}
+          />
         ) : null}
+
+        <button type="button" className="cancel-button" onClick={onClose}>
+          Cancel
+        </button>
+      </section>
+    </div>
+  );
+}
+
+function AquaparkReservationModal({
+  reservation,
+  savedSurnames,
+  onClose,
+  onSave,
+}: {
+  reservation: AquaparkReservation | null;
+  savedSurnames: ReservationSurname[];
+  onClose: () => void;
+  onSave: (details: { surname: string; reservedDays: number; notes?: string }) => void;
+}) {
+  const [surname, setSurname] = useState(reservation?.surname ?? '');
+  const [reservedDays, setReservedDays] = useState(String(reservation?.reservedDays ?? 1));
+  const [notes, setNotes] = useState(reservation?.notes ?? '');
+  const canSave = normalizeSurname(surname).length > 0;
+
+  function saveReservation() {
+    if (!canSave) {
+      return;
+    }
+
+    onSave({
+      surname,
+      reservedDays: Math.max(1, Number(reservedDays) || 1),
+      notes: notes.trim() || undefined,
+    });
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <section
+        className="action-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="aquapark-editor-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="sheet-handle" aria-hidden="true" />
+        <header className="sheet-header">
+          <div>
+            <p className="eyebrow">Aquapark</p>
+            <h2 id="aquapark-editor-title">
+              {reservation ? 'Edit Reservation' : 'New Aquapark Reservation'}
+            </h2>
+          </div>
+          <button type="button" className="close-button" aria-label="Close Aquapark editor" onClick={onClose}>
+            Close
+          </button>
+        </header>
+
+        <div className="detail-panel aquapark-editor-panel">
+          <SurnameInput
+            inputId="aquapark-reservation-surname"
+            value={surname}
+            savedSurnames={savedSurnames}
+            onChange={setSurname}
+          />
+          <label>
+            Reserved days
+            <input
+              type="number"
+              inputMode="numeric"
+              min="1"
+              value={reservedDays}
+              onChange={(event) => setReservedDays(event.target.value)}
+            />
+          </label>
+          <label>
+            Notes
+            <textarea
+              value={notes}
+              onChange={(event) => setNotes(event.target.value)}
+              rows={3}
+              placeholder="Optional"
+            />
+          </label>
+          <button
+            type="button"
+            className="sheet-button aquapark-save-action"
+            onClick={saveReservation}
+            disabled={!canSave}
+          >
+            Save Aquapark Reservation
+          </button>
+        </div>
 
         <button type="button" className="cancel-button" onClick={onClose}>
           Cancel
