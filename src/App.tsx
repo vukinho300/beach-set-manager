@@ -1232,6 +1232,43 @@ function App() {
     }
   }
 
+  function deleteBeachReservation(reservationId: string) {
+    const reservation = beachReservations.find((candidate) => candidate.id === reservationId);
+
+    if (!reservation) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Delete reservation for ${reservation.surname}? This will also remove it from any assigned sets or beds.`,
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setBeachReservations((currentReservations) =>
+      currentReservations.filter((candidate) => candidate.id !== reservationId),
+    );
+    setSets((currentSets) =>
+      Object.fromEntries(
+        Object.values(currentSets).map((set) => [
+          set.id,
+          set.beachReservationId === reservationId ? updateSetStatus(set, 'free') : set,
+        ]),
+      ) as BeachSetMap,
+    );
+    setExtraBeds((currentBeds) =>
+      Object.fromEntries(
+        Object.values(currentBeds).map((bed) => [
+          bed.id,
+          bed.beachReservationId === reservationId ? updateBedStatus(bed, 'free') : bed,
+        ]),
+      ) as ExtraBedMap,
+    );
+    closeEditor();
+  }
+
   function exportBackup() {
     const today = new Date().toISOString().slice(0, 10);
     const payload = createBackupPayload({
@@ -1384,7 +1421,10 @@ function App() {
         />
       ) : (
         <>
-          <ActiveReservationsSection reservations={beachReservationSummaries} />
+          <ActiveReservationsSection
+            reservations={beachReservationSummaries}
+            onDeleteReservation={deleteBeachReservation}
+          />
 
           <section className="status-strip" aria-label="Current set totals by status">
             {STATUS_ORDER.map((status) => (
@@ -1718,7 +1758,13 @@ function BedCard({
   );
 }
 
-function ActiveReservationsSection({ reservations }: { reservations: ActiveReservationSummary[] }) {
+function ActiveReservationsSection({
+  reservations,
+  onDeleteReservation,
+}: {
+  reservations: ActiveReservationSummary[];
+  onDeleteReservation: (reservationId: string) => void;
+}) {
   return (
     <section className="active-reservations" aria-labelledby="active-reservations-heading">
       <div className="active-reservations-header">
@@ -1737,6 +1783,14 @@ function ActiveReservationsSection({ reservations }: { reservations: ActiveReser
               </div>
               <strong>{reservation.surname}</strong>
               <span className="active-days">{formatDaysLeft(reservation.reservedDays)}</span>
+              <button
+                type="button"
+                className="active-reservation-delete"
+                onClick={() => onDeleteReservation(reservation.id)}
+                aria-label={`Delete reservation for ${reservation.surname}`}
+              >
+                Delete
+              </button>
               {reservation.notes ? <small className="active-reservation-notes">{reservation.notes}</small> : null}
             </article>
           ))}
