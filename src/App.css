@@ -67,7 +67,7 @@ h2 {
   display: grid;
   gap: 9px;
   margin-bottom: 12px;
-  padding: 10px;
+  padding: 12px;
   border: 1px solid rgba(31, 95, 173, 0.22);
   border-radius: 8px;
   background:
@@ -88,17 +88,15 @@ h2 {
 
 .active-reservation-list {
   display: grid;
-  gap: 7px;
-  max-height: 330px;
-  overflow-y: auto;
-  padding-right: 2px;
+  gap: 14px;
 }
 
 .active-reservation-card {
   display: grid;
   gap: 7px;
+  height: auto;
   min-height: 0;
-  padding: 11px;
+  padding: 15px;
   color: #17202a;
   border: 1px solid rgba(31, 95, 173, 0.24);
   border-radius: 8px;
@@ -107,17 +105,16 @@ h2 {
 
 .active-reservation-card-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
 }
 
 .active-reservation-card-header strong {
   min-width: 0;
-  overflow: hidden;
   font-size: 0.98rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .active-reservation-meta {
@@ -128,6 +125,7 @@ h2 {
 }
 
 .active-days {
+  flex: 0 0 auto;
   justify-self: end;
   padding: 5px 8px;
   color: #1f5fad;
@@ -162,9 +160,15 @@ h2 {
 }
 
 .active-reservation-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 7px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 2px;
+}
+
+.active-reservation-actions button {
+  width: 100%;
+  min-height: 44px;
 }
 
 .active-reservation-notes {
