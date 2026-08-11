@@ -1571,21 +1571,6 @@ function App() {
     return () => window.clearInterval(timer);
   }, []);
 
-  useEffect(() => {
-    setAquaparkEntries((currentEntries) => {
-      let changed = false;
-      const updatedEntries = currentEntries.map((entry) => {
-        const isTimedTicket = entry.ticketType !== 'one_week' && entry.ticketType !== 'custom_days';
-        if (!isTimedTicket || !isAquaparkEntryExpired(entry, currentTime) || entry.returnedWristbands.length === entry.wristbands.length) {
-          return entry;
-        }
-        changed = true;
-        return { ...entry, returnedWristbands: [...entry.wristbands] };
-      });
-      return changed ? updatedEntries : currentEntries;
-    });
-  }, [currentTime]);
-
   const counts = useMemo(() => {
     return STATUS_ORDER.reduce(
       (summary, status) => ({
@@ -2001,11 +1986,6 @@ function App() {
   }
 
   function toggleAquaparkWristbandReturn(entryId: string, wristband: number) {
-    const entry = aquaparkEntries.find((candidate) => candidate.id === entryId);
-    const isTimedTicket = entry?.ticketType !== 'one_week' && entry?.ticketType !== 'custom_days';
-    if (entry && isTimedTicket && isAquaparkEntryExpired(entry, currentTime)) {
-      return;
-    }
     setAquaparkEntries((currentEntries) => currentEntries.map((entry) => entry.id !== entryId ? entry : {
       ...entry,
       returnedWristbands: entry.returnedWristbands.includes(wristband)
