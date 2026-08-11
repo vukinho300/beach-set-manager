@@ -2966,9 +2966,22 @@ function AquaparkEntryCard({
       <div className="aquapark-entry-card-main">
         <div>
           <p className="eyebrow">Wristbands</p>
-          <div className="wristband-return-list">{entry.wristbands.map((wristband) => (
-            <button type="button" key={wristband} className={entry.returnedWristbands.includes(wristband) ? 'returned-wristband' : ''} onClick={() => onToggleWristbandReturn(entry.id, wristband)} aria-pressed={entry.returnedWristbands.includes(wristband)}>{wristband}</button>
-          ))}</div>
+          <div className="wristband-return-list">{entry.wristbands.map((wristband) => {
+            const isReturned = entry.returnedWristbands.includes(wristband);
+
+            return (
+              <button
+                type="button"
+                key={wristband}
+                className={isReturned ? 'returned-wristband' : ''}
+                onClick={() => onToggleWristbandReturn(entry.id, wristband)}
+                aria-pressed={isReturned}
+                aria-label={`Wristband ${wristband}${isReturned ? ', returned' : ', outstanding'}`}
+              >
+                {wristband}
+              </button>
+            );
+          })}</div>
         </div>
         <span className="aquapark-price-badge">Total {formatEuro(entry.totalPrice)}</span>
       </div>

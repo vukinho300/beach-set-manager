@@ -4183,6 +4183,51 @@ h4 {
   font-size: 0.94rem;
 }
 
+/* Reservation choices must grow with notes and assignment details in the mobile sheet. */
+.existing-reservation-list {
+  align-content: start;
+  grid-auto-rows: max-content;
+  padding-bottom: 8px;
+}
+
+button.existing-reservation-option {
+  min-width: 0;
+  min-height: 0;
+  height: auto;
+  grid-template-rows: repeat(4, max-content);
+  align-self: start;
+}
+
+.existing-reservation-option-assignment {
+  display: block;
+  min-width: 0;
+  margin-top: 1px;
+  white-space: normal;
+}
+
+/* Returned wristbands retain the strike-through and gain a high-contrast X overlay. */
+.wristband-return-list .returned-wristband {
+  position: relative;
+  color: #66727d;
+  font-weight: 900;
+  text-decoration: line-through 2px #be1832;
+  text-decoration-skip-ink: none;
+}
+
+.wristband-return-list .returned-wristband::after {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  z-index: 1;
+  color: #be1832;
+  content: "\00d7";
+  font-size: 2rem;
+  font-weight: 900;
+  line-height: 1;
+  text-decoration: none;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
 .transaction-delete {
   min-height: 34px;
   justify-self: end;
