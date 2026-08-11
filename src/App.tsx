@@ -2173,11 +2173,7 @@ function App() {
   }
 
   return (
-    <main className={`app-shell${activeTab === 'beaches' ? ' beaches-active' : ''}`}>
-      <header className="topbar">
-        <h1>Petalon</h1>
-      </header>
-
+    <main className={`app-shell tab-${activeTab}${activeTab === 'beaches' ? ' beaches-active' : ''}`}>
       <TopNavigation activeTab={activeTab} onSelectTab={selectTab} />
 
       <div className="page-content">
@@ -3234,6 +3230,7 @@ function SettingsPage({ view, backupMessage, importInputRef, savedSurnames, onDa
     <section className="settings-section"><h3>Daily Reset</h3><p>Start a fresh local business day and clear current-day sales.</p><button type="button" className="reset-button" onClick={onDailyReset}>Daily Reset</button></section>
     <section className="settings-section"><h3>Backups</h3><p>Saved locally on this device. Other phones have separate data.</p><div className="tool-buttons"><button type="button" className="tool-button" onClick={onExport}>Export Backup</button><button type="button" className="tool-button" onClick={onImport}>Import Backup</button></div><input ref={importInputRef} className="file-input" type="file" accept="application/json,.json" onChange={(event) => onImportFile(event.target.files?.[0])} />{backupMessage ? <p className="backup-message">{backupMessage}</p> : null}</section>
     <section className="settings-section"><h3>Local Tools</h3><button type="button" className="danger-link" onClick={onResetAppData}>Reset app data</button><SavedSurnamesManager savedSurnames={savedSurnames} onDeleteSurname={onDeleteSurname} /></section>
+    <section className="settings-about" aria-label="About"><span>About</span><strong>Built for Camp Petalon</strong></section>
   </section>;
 }
 
