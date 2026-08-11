@@ -156,6 +156,7 @@ type ActiveEditor =
   | { kind: 'set'; id: number }
   | { kind: 'bed'; id: BedId }
   | { kind: 'beachReservation'; id: string }
+  | { kind: 'newBeachReservation' }
   | { kind: 'sunbedSale'; id?: string }
   | { kind: 'aquaparkEntry' };
 type ActiveReservationSummary = {
@@ -1706,6 +1707,10 @@ function App() {
     setActiveEditor({ kind: 'beachReservation', id: reservationId });
   }
 
+  function openNewBeachReservation() {
+    setActiveEditor({ kind: 'newBeachReservation' });
+  }
+
   function closeEditor() {
     setActiveEditor(null);
   }
@@ -1916,6 +1921,23 @@ function App() {
           : reservation,
       ),
     );
+    closeEditor();
+  }
+
+  function createUnassignedBeachReservation(details: BeachReservationDetails) {
+    const surname = normalizeSurname(details.surname);
+    if (!surname) return;
+    const reservation = createBeachReservation({ ...details, surname });
+    saveReservationSurname(reservation.surname);
+    setBeachReservations((currentReservations) => [reservation, ...currentReservations]);
+    if (reservation.totalAmountPaid !== undefined && reservation.paymentRecordedAt) {
+      const amount = reservation.totalAmountPaid;
+      const createdAt = reservation.paymentRecordedAt;
+      setTransactions((currentTransactions) => [...currentTransactions, {
+        id: createReservationId('transaction'), type: 'beach_reservation', amount, createdAt, resourceId: reservation.id, resourceLabel: reservation.surname,
+        description: formatReservationDates(reservation.startDate, reservation.endDate),
+      }]);
+    }
     closeEditor();
   }
 
@@ -2158,6 +2180,7 @@ function App() {
 
       <TopNavigation activeTab={activeTab} onSelectTab={selectTab} />
 
+      <div className="page-content">
       {activeTab === 'sunbeds' ? (
         <SunbedsPage
           sales={sunbedSales}
@@ -2195,6 +2218,7 @@ function App() {
         <>
           <ActiveReservationsSection
             reservations={beachReservationSummaries}
+            onCreateReservation={openNewBeachReservation}
             onEditReservation={openBeachReservation}
             onDeleteReservation={deleteBeachReservation}
             collapsed={reservationsCollapsed}
@@ -2241,6 +2265,7 @@ function App() {
           />
         </>
       )}
+      </div>
 
       {activeTab === 'beaches' ? <BeachShortcuts onSelect={selectBeachShortcut} /> : null}
 
@@ -2288,6 +2313,15 @@ function App() {
           savedSurnames={savedSurnames}
           onClose={closeEditor}
           onSave={(details) => saveBeachReservation(activeBeachReservation.id, details)}
+        />
+      ) : null}
+
+      {activeEditor?.kind === 'newBeachReservation' ? (
+        <BeachReservationModal
+          reservation={null}
+          savedSurnames={savedSurnames}
+          onClose={closeEditor}
+          onSave={createUnassignedBeachReservation}
         />
       ) : null}
 
@@ -2545,12 +2579,14 @@ function BedCard({
 
 function ActiveReservationsSection({
   reservations,
+  onCreateReservation,
   onEditReservation,
   onDeleteReservation,
   collapsed,
   onToggleCollapsed,
 }: {
   reservations: ActiveReservationSummary[];
+  onCreateReservation: () => void;
   onEditReservation: (reservationId: string) => void;
   onDeleteReservation: (reservationId: string) => void;
   collapsed: boolean;
@@ -2563,7 +2599,10 @@ function ActiveReservationsSection({
           <p className="eyebrow">Reserved now</p>
           <h2 id="active-reservations-heading">Beach Reservations ({reservations.length})</h2>
         </div>
-        <button type="button" className="active-reservations-toggle" onClick={onToggleCollapsed}>{collapsed ? 'Expand' : 'Collapse'}</button>
+        <div className="active-reservations-header-actions">
+          <button type="button" className="active-reservation-new" onClick={onCreateReservation}>New Reservation</button>
+          <button type="button" className="active-reservations-toggle" onClick={onToggleCollapsed}>{collapsed ? 'Expand' : 'Collapse'}</button>
+        </div>
       </div>
 
       {!collapsed && reservations.length ? (
@@ -2611,18 +2650,18 @@ function BeachReservationModal({
   onClose,
   onSave,
 }: {
-  reservation: BeachReservation;
+  reservation: BeachReservation | null;
   savedSurnames: ReservationSurname[];
   onClose: () => void;
   onSave: (details: BeachReservationDetails) => void;
 }) {
-  const [surname, setSurname] = useState(reservation.surname);
-  const [startDate, setStartDate] = useState(reservation.startDate);
-  const [endDate, setEndDate] = useState(reservation.endDate);
+  const [surname, setSurname] = useState(reservation?.surname ?? '');
+  const [startDate, setStartDate] = useState(reservation?.startDate ?? getLocalDateKey());
+  const [endDate, setEndDate] = useState(reservation?.endDate ?? getLocalDateKey());
   const [totalAmountPaid, setTotalAmountPaid] = useState(
-    reservation.totalAmountPaid === undefined ? '' : String(reservation.totalAmountPaid),
+    reservation?.totalAmountPaid === undefined ? '' : String(reservation.totalAmountPaid),
   );
-  const [notes, setNotes] = useState(reservation.notes ?? '');
+  const [notes, setNotes] = useState(reservation?.notes ?? '');
   const duration = getInclusiveDateDays(startDate, endDate);
   const parsedAmount = parsePositiveMoney(totalAmountPaid);
   const canSave = normalizeSurname(surname).length > 0 && duration > 0 && parsedAmount !== null;
@@ -2654,7 +2693,7 @@ function BeachReservationModal({
         <header className="sheet-header">
           <div>
             <p className="eyebrow">Saved beach reservation</p>
-            <h2 id="beach-reservation-editor-title">Edit Reservation</h2>
+            <h2 id="beach-reservation-editor-title">{reservation ? 'Edit Reservation' : 'New Reservation'}</h2>
           </div>
           <button type="button" className="close-button" aria-label="Close reservation editor" onClick={onClose}>
             Close
@@ -2663,7 +2702,7 @@ function BeachReservationModal({
 
         <div className="detail-panel reservation-edit-panel">
           <SurnameInput
-            inputId="beach-reservation-edit-surname"
+            inputId={reservation ? 'beach-reservation-edit-surname' : 'beach-reservation-new-surname'}
             value={surname}
             savedSurnames={savedSurnames}
             onChange={setSurname}
@@ -2711,7 +2750,7 @@ function BeachReservationModal({
             />
           </label>
           <button type="button" className="sheet-button reserved-action" onClick={save} disabled={!canSave}>
-            Save Reservation
+            {reservation ? 'Save Reservation' : 'Create Reservation'}
           </button>
         </div>
 
@@ -2891,7 +2930,7 @@ function AquaparkPage({
               <AquaparkEntryCard
                 key={entry.id}
                 entry={entry}
-                expired={isAquaparkEntryExpired(entry, currentTime) && entry.returnedWristbands.length < entry.wristbands.length}
+                expired={isAquaparkEntryExpired(entry, currentTime)}
                 onDelete={onDeleteEntry}
                 onToggleWristbandReturn={onToggleWristbandReturn}
               />

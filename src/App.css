@@ -6,15 +6,19 @@
 }
 
 .topbar {
-  position: sticky;
+  position: fixed;
   top: 0;
-  z-index: 10;
+  left: 50%;
+  z-index: 30;
+  width: min(100%, 760px);
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin: -16px -14px 14px;
+  margin: 0;
   padding: 14px;
+  transform: translateX(-50%);
   background: rgba(246, 251, 255, 0.94);
   border-bottom: 1px solid rgba(23, 32, 42, 0.1);
   backdrop-filter: blur(16px);
@@ -65,12 +69,15 @@ h2 {
 }
 
 .top-navigation {
-  position: sticky;
-  top: 61px;
-  z-index: 9;
+  position: fixed;
+  top: 52px;
+  left: 50%;
+  z-index: 29;
+  width: min(100%, 760px);
+  box-sizing: border-box;
   display: flex;
   gap: 8px;
-  margin: 0 -14px 14px;
+  margin: 0;
   padding: 8px 14px;
   overflow-x: auto;
   overscroll-behavior-x: contain;
@@ -78,6 +85,7 @@ h2 {
   background: rgba(246, 251, 255, 0.94);
   border-bottom: 1px solid rgba(23, 32, 42, 0.1);
   backdrop-filter: blur(16px);
+  transform: translateX(-50%);
 }
 
 .top-navigation::-webkit-scrollbar {
@@ -137,6 +145,10 @@ h2 {
   padding-bottom: 88px;
 }
 
+.page-content {
+  padding-top: 112px;
+}
+
 .report-button {
   min-height: 44px;
   padding: 0 12px;
@@ -156,6 +168,17 @@ h2 {
   border: 1px solid rgba(31, 95, 173, 0.28);
   border-radius: 8px;
   background: #edf5ff;
+}
+
+.active-reservation-new {
+  min-height: 40px;
+  padding: 0 10px;
+  color: #ffffff;
+  font-size: 0.74rem;
+  font-weight: 900;
+  border: 0;
+  border-radius: 8px;
+  background: #0c4fa8;
 }
 
 .reset-button:active,
@@ -181,6 +204,12 @@ h2 {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+}
+
+.active-reservations-header-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
 }
 
 .active-reservations h2 {
@@ -1908,7 +1937,7 @@ h2 {
   }
 
   .topbar {
-    margin-inline: -22px;
+    margin: 0;
     padding-inline: 22px;
   }
 
