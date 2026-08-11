@@ -73,6 +73,7 @@ type AquaparkEntry = {
   isLegacyPrice?: boolean;
   startAt: string;
   endAt?: string;
+  extraMinutes: number;
   validUntil?: string;
   customDays?: number;
   dailyUnitPrice?: number;
@@ -129,6 +130,7 @@ type AquaparkEntryDetails = {
   specialPrice?: number;
   customDays?: number;
   dailyUnitPrice?: number;
+  extraMinutes?: number;
   description?: string;
 };
 
@@ -631,6 +633,9 @@ function normalizeImportedAquaparkEntry(value: unknown): AquaparkEntry | null {
   const endAt = typeof candidate.endAt === 'string' && !Number.isNaN(new Date(candidate.endAt).getTime())
     ? candidate.endAt
     : undefined;
+  const extraMinutes = Number.isSafeInteger(candidate.extraMinutes) && (candidate.extraMinutes as number) >= 0
+    ? candidate.extraMinutes as number
+    : 0;
   const validUntil = typeof candidate.validUntil === 'string' && !Number.isNaN(new Date(candidate.validUntil).getTime())
     ? candidate.validUntil
     : undefined;
@@ -673,6 +678,7 @@ function normalizeImportedAquaparkEntry(value: unknown): AquaparkEntry | null {
     isLegacyPrice: isLegacyPrice || undefined,
     startAt,
     endAt,
+    extraMinutes,
     validUntil,
     customDays,
     dailyUnitPrice,
@@ -1206,7 +1212,24 @@ function roundToNearestFiveMinutes(date: Date): Date {
   return rounded;
 }
 
-function getAquaparkEntryTiming(ticketType: AquaparkTicketType, startAt: Date, customDays?: number) {
+function isExtraTimeTicket(ticketType: AquaparkTicketType): boolean {
+  return ticketType === '30min' || ticketType === '1hour' || ticketType === 'half_day';
+}
+
+function addAquaparkExtraTime(endAt: Date, startAt: Date, ticketType: AquaparkTicketType, extraMinutes: number): string {
+  const extendedEnd = new Date(endAt);
+  extendedEnd.setMinutes(extendedEnd.getMinutes() + extraMinutes);
+
+  if (ticketType === 'half_day') {
+    const closingTime = new Date(startAt);
+    closingTime.setHours(20, 0, 0, 0);
+    return (extendedEnd > closingTime ? closingTime : extendedEnd).toISOString();
+  }
+
+  return extendedEnd.toISOString();
+}
+
+function getAquaparkEntryTiming(ticketType: AquaparkTicketType, startAt: Date, customDays?: number, extraMinutes = 0) {
   const end = new Date(startAt);
 
   if (ticketType === 'one_week') {
@@ -1221,12 +1244,12 @@ function getAquaparkEntryTiming(ticketType: AquaparkTicketType, startAt: Date, c
 
   if (ticketType === '30min') {
     end.setMinutes(end.getMinutes() + 40);
-    return { endAt: roundToNearestFiveMinutes(end).toISOString() };
+    return { endAt: addAquaparkExtraTime(roundToNearestFiveMinutes(end), startAt, ticketType, extraMinutes) };
   }
 
   if (ticketType === '1hour') {
     end.setMinutes(end.getMinutes() + 70);
-    return { endAt: roundToNearestFiveMinutes(end).toISOString() };
+    return { endAt: addAquaparkExtraTime(roundToNearestFiveMinutes(end), startAt, ticketType, extraMinutes) };
   }
 
   if (ticketType === 'half_day') {
@@ -1234,7 +1257,8 @@ function getAquaparkEntryTiming(ticketType: AquaparkTicketType, startAt: Date, c
     const roundedEnd = roundToNearestFiveMinutes(end);
     const closingTime = new Date(startAt);
     closingTime.setHours(20, 0, 0, 0);
-    return { endAt: (roundedEnd > closingTime ? closingTime : roundedEnd).toISOString() };
+    const normalEnd = roundedEnd > closingTime ? closingTime : roundedEnd;
+    return { endAt: addAquaparkExtraTime(normalEnd, startAt, ticketType, extraMinutes) };
   }
 
   end.setHours(20, 0, 0, 0);
@@ -1249,6 +1273,9 @@ function createAquaparkEntry(details: AquaparkEntryDetails): AquaparkEntry {
     ? normalizePositiveMoney(details.dailyUnitPrice)
     : undefined;
   const specialPrice = normalizePositiveMoney(details.specialPrice);
+  const extraMinutes = isExtraTimeTicket(details.ticketType) && Number.isSafeInteger(details.extraMinutes) && (details.extraMinutes as number) >= 0
+    ? details.extraMinutes as number
+    : 0;
   const unitPrice = customDailyUnitPrice ?? specialPrice ?? ticket.price;
   const quantityMultiplier = details.ticketType === 'custom_days' ? customDays ?? 1 : 1;
   const hasCustomPriceOverride = details.ticketType === 'custom_days' && customDailyUnitPrice !== undefined && customDailyUnitPrice !== ticket.price;
@@ -1263,7 +1290,8 @@ function createAquaparkEntry(details: AquaparkEntryDetails): AquaparkEntry {
     priceMode: hasCustomPriceOverride || specialPrice ? 'special' : 'default',
     status: 'active',
     startAt: start.toISOString(),
-    ...getAquaparkEntryTiming(details.ticketType, start, customDays),
+    ...getAquaparkEntryTiming(details.ticketType, start, customDays, extraMinutes),
+    extraMinutes,
     customDays,
     dailyUnitPrice: details.ticketType === 'custom_days' ? unitPrice : undefined,
     description: details.description?.trim() || undefined,
@@ -2844,6 +2872,7 @@ function AquaparkEntryCard({
           <span><strong>End</strong>{formatTime(entry.endAt ?? entry.startAt)}</span>
         </div>
       )}
+      {entry.extraMinutes > 0 ? <p className="aquapark-extra-time">Extra time: +{entry.extraMinutes} min</p> : null}
       {entry.description ? (
         <div className="aquapark-entry-description">
           <strong>Description</strong>
@@ -3696,6 +3725,7 @@ function AquaparkEntryModal({
   const [specialPrice, setSpecialPrice] = useState('');
   const [customDays, setCustomDays] = useState('1');
   const [customDailyPrice, setCustomDailyPrice] = useState('15');
+  const [extraMinutes, setExtraMinutes] = useState(0);
   const [description, setDescription] = useState('');
   const parsedWristbands = parseWristbandNumbers(wristbandInput);
   const parsedSpecialPrice = parsePositiveMoney(specialPrice);
@@ -3704,6 +3734,7 @@ function AquaparkEntryModal({
   const parsedCustomDays = Number(customDays);
   const parsedCustomDailyPrice = parsePositiveMoney(customDailyPrice);
   const isCustomDays = ticketType === 'custom_days';
+  const allowsExtraTime = isExtraTimeTicket(ticketType);
   const unitPrice = isCustomDays
     ? parsedCustomDailyPrice ?? ticket.price
     : useSpecialPrice && parsedSpecialPrice ? parsedSpecialPrice : ticket.price;
@@ -3725,6 +3756,7 @@ function AquaparkEntryModal({
       specialPrice: useSpecialPrice ? parsedSpecialPrice ?? undefined : undefined,
       customDays: isCustomDays ? parsedCustomDays : undefined,
       dailyUnitPrice: isCustomDays ? parsedCustomDailyPrice ?? undefined : undefined,
+      extraMinutes: allowsExtraTime ? extraMinutes : undefined,
       description: description.trim() || undefined,
     });
   }
@@ -3824,6 +3856,15 @@ function AquaparkEntryModal({
               : 'Add wristbands to calculate the total'}
             <strong>Total {formatEuro(totalPrice)}</strong>
           </p>
+          {allowsExtraTime ? (
+            <div className="aquapark-extra-time-controls">
+              <p>Extra time: +{extraMinutes} min</p>
+              <div className="price-button-row">
+                <button type="button" className="quick-option" onClick={() => setExtraMinutes((minutes) => minutes + 5)}>+5 min</button>
+                <button type="button" className="clear-price-button" onClick={() => setExtraMinutes(0)}>Clear Extra Time</button>
+              </div>
+            </div>
+          ) : null}
           <label>
             Description
             <textarea

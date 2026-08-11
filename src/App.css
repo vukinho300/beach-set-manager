@@ -913,6 +913,26 @@ h2 {
   font-weight: 900;
 }
 
+.aquapark-extra-time,
+.aquapark-extra-time-controls p {
+  margin: 0;
+  color: #124855;
+  font-size: 0.86rem;
+  font-weight: 900;
+}
+
+.aquapark-extra-time-controls {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 8px;
+  background: rgba(223, 247, 241, 0.66);
+}
+
+.aquapark-extra-time-controls .price-button-row {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+}
+
 .aquapark-entry-times {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
