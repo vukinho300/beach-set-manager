@@ -8,7 +8,10 @@ type BeachId = 1 | 2;
 type BedId = 1 | 2 | 3 | 4;
 type BedLabel = `Bed ${BedId}`;
 type ReservationSurname = string;
-type TabId = 'beach1' | 'beach2' | 'beds' | 'aquapark';
+type TabId = 'beach1' | 'beach2' | 'beds' | 'sunbeds' | 'aquapark' | 'report';
+type SetPriceMode = 'fixed' | 'special';
+type AquaparkTicketType = '30min' | '1hour' | 'half_day' | 'one_day' | 'one_week' | 'custom_days';
+type AquaparkPriceMode = 'default' | 'special';
 
 type BeachSet = {
   id: number;
@@ -18,6 +21,9 @@ type BeachSet = {
   surname?: string;
   reservedDays?: number;
   partialNote?: string;
+  price?: number;
+  priceMode?: SetPriceMode;
+  dailySaleId?: string;
   updatedAt?: string;
 };
 
@@ -28,13 +34,20 @@ type ExtraBed = {
   beachReservationId?: string;
   surname?: string;
   reservedDays?: number;
+  price?: number;
+  priceMode?: SetPriceMode;
+  dailySaleId?: string;
   updatedAt?: string;
 };
 
 type BeachReservation = {
   id: string;
   surname: string;
-  reservedDays: number;
+  startDate: string;
+  endDate: string;
+  totalAmountPaid?: number;
+  paymentRecordedAt?: string;
+  reservedDays?: number;
   notes?: string;
   createdAt: string;
   updatedAt?: string;
@@ -42,17 +55,81 @@ type BeachReservation = {
 
 type BeachReservationDetails = {
   surname: string;
-  reservedDays: number;
+  startDate: string;
+  endDate: string;
+  totalAmountPaid?: number;
   notes?: string;
 };
 
-type AquaparkReservation = {
+type AquaparkEntry = {
   id: string;
-  surname: string;
-  reservedDays: number;
-  notes?: string;
+  wristbands: number[];
+  ticketType: AquaparkTicketType;
+  defaultUnitPrice: number;
+  unitPrice: number;
+  totalPrice: number;
+  priceMode: AquaparkPriceMode;
+  status: 'active' | 'closed';
+  isLegacyPrice?: boolean;
+  startAt: string;
+  endAt?: string;
+  validUntil?: string;
+  customDays?: number;
+  dailyUnitPrice?: number;
+  description?: string;
   createdAt: string;
-  updatedAt?: string;
+  closedAt?: string;
+};
+
+type NonNumberedSunbedSale = {
+  id: string;
+  quantity: number;
+  totalAmount: number;
+  createdAt: string;
+};
+
+type DailySale =
+  | {
+      id: string;
+      kind: 'beach_set';
+      setId: number;
+      amount: number;
+      createdAt: string;
+    }
+  | {
+      id: string;
+      kind: 'aquapark_entry';
+      entryId: string;
+      ticketType: AquaparkTicketType;
+      wristbandCount: number;
+      unitPrice: number;
+      customDays?: number;
+      amount: number;
+      createdAt: string;
+    }
+  | {
+      id: string;
+      kind: 'bed';
+      bedId: BedId;
+      amount: number;
+      createdAt: string;
+    }
+  | {
+      id: string;
+      kind: 'sunbed';
+      sunbedSaleId: string;
+      quantity: number;
+      amount: number;
+      createdAt: string;
+    };
+
+type AquaparkEntryDetails = {
+  wristbands: number[];
+  ticketType: AquaparkTicketType;
+  specialPrice?: number;
+  customDays?: number;
+  dailyUnitPrice?: number;
+  description?: string;
 };
 
 type BeachSetMap = Record<number, BeachSet>;
@@ -62,11 +139,14 @@ type ActiveEditor =
   | { kind: 'set'; id: number }
   | { kind: 'bed'; id: BedId }
   | { kind: 'beachReservation'; id: string }
-  | { kind: 'aquapark'; id?: string };
+  | { kind: 'sunbedSale'; id?: string }
+  | { kind: 'aquaparkEntry' };
 type ActiveReservationSummary = {
   id: string;
   surname: string;
-  reservedDays: number;
+  startDate: string;
+  endDate: string;
+  totalAmountPaid?: number;
   notes?: string;
   assignmentLabel: string;
 };
@@ -80,12 +160,14 @@ type AppData = {
   extraBeds: ExtraBedMap;
   beachReservations: BeachReservation[];
   savedSurnames: ReservationSurname[];
-  aquaparkReservations: AquaparkReservation[];
+  sunbedSales: NonNumberedSunbedSale[];
+  aquaparkEntries: AquaparkEntry[];
+  dailySales: DailySale[];
   lastAutomaticResetDate?: string;
 };
 type BackupPayload = AppData & {
   app: 'Beach Set Manager';
-  version: 6;
+  version: 10;
   exportedAt: string;
 };
 
@@ -102,6 +184,14 @@ const BEACH_ONE_UPPER_ROW = [20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10];
 const BEACH_ONE_LOWER_ROW = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 const EXTRA_BED_IDS: BedId[] = [1, 2, 3, 4];
 const PARTIAL_OPTIONS = ['1 sunbed only', '1 sunbed + parasol', '2 sunbeds no parasol'];
+const AQUAPARK_TICKETS: Record<AquaparkTicketType, { label: string; price: number }> = {
+  '30min': { label: '30 minutes', price: 12 },
+  '1hour': { label: '1 hour', price: 14 },
+  half_day: { label: 'Half day', price: 20 },
+  one_day: { label: 'One day', price: 25 },
+  one_week: { label: 'One week', price: 99 },
+  custom_days: { label: 'Custom Days', price: 15 },
+};
 
 const STATUS_META: Record<SetStatus, { label: string; shortLabel: string }> = {
   free: { label: 'Free', shortLabel: 'Free' },
@@ -149,7 +239,9 @@ function createFreeAppData(): AppData {
     extraBeds: createFreeExtraBeds(),
     beachReservations: [],
     savedSurnames: [],
-    aquaparkReservations: [],
+    sunbedSales: [],
+    aquaparkEntries: [],
+    dailySales: [],
     lastAutomaticResetDate: getLocalDateKey(),
   };
 }
@@ -163,6 +255,91 @@ function getLocalDateKey(date = new Date()): string {
 
 function normalizeResetDate(value: unknown): string | undefined {
   return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : undefined;
+}
+
+function isSetPriceMode(value: unknown): value is SetPriceMode {
+  return value === 'fixed' || value === 'special';
+}
+
+function isAquaparkTicketType(value: unknown): value is AquaparkTicketType {
+  return typeof value === 'string' && value in AQUAPARK_TICKETS;
+}
+
+function isAquaparkPriceMode(value: unknown): value is AquaparkPriceMode {
+  return value === 'default' || value === 'special';
+}
+
+function normalizePositiveMoney(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? Math.round(value * 100) / 100
+    : undefined;
+}
+
+function normalizeNonNegativeMoney(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? Math.round(value * 100) / 100
+    : undefined;
+}
+
+function parsePositiveMoney(value: string): number | null {
+  const normalized = value.trim();
+
+  if (!/^\d+(?:\.\d{1,2})?$/.test(normalized)) {
+    return null;
+  }
+
+  return normalizePositiveMoney(Number(normalized)) ?? null;
+}
+
+function parseNonNegativeMoney(value: string): number | null {
+  const normalized = value.trim();
+
+  if (!/^\d+(?:\.\d{1,2})?$/.test(normalized)) {
+    return null;
+  }
+
+  return normalizeNonNegativeMoney(Number(normalized)) ?? null;
+}
+
+function isLocalDateKey(value: unknown): value is string {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
+
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(year, month - 1, day);
+  return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day;
+}
+
+function addDaysToDateKey(dateKey: string, days: number): string {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  const date = new Date(year, month - 1, day + days);
+  return getLocalDateKey(date);
+}
+
+function getInclusiveDateDays(startDate: string, endDate: string): number {
+  if (!isLocalDateKey(startDate) || !isLocalDateKey(endDate) || endDate < startDate) {
+    return 0;
+  }
+
+  const [startYear, startMonth, startDay] = startDate.split('-').map(Number);
+  const [endYear, endMonth, endDay] = endDate.split('-').map(Number);
+  const start = Date.UTC(startYear, startMonth - 1, startDay);
+  const end = Date.UTC(endYear, endMonth - 1, endDay);
+  return Math.floor((end - start) / 86_400_000) + 1;
+}
+
+function formatReservationDates(startDate: string, endDate: string): string {
+  const options: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'short' };
+  const format = (dateKey: string) => {
+    const [year, month, day] = dateKey.split('-').map(Number);
+    return new Intl.DateTimeFormat(undefined, options).format(new Date(year, month - 1, day));
+  };
+  return `${format(startDate)} to ${format(endDate)}`;
+}
+
+function formatEuro(amount: number): string {
+  return `€${Number.isInteger(amount) ? amount : amount.toFixed(2)}`;
 }
 
 function createReservationId(prefix: string): string {
@@ -221,7 +398,10 @@ function createBeachReservation(details: BeachReservationDetails): BeachReservat
   return {
     id: createReservationId('beach'),
     surname: normalizeSurname(details.surname),
-    reservedDays: Math.max(1, Math.floor(details.reservedDays) || 1),
+    startDate: details.startDate,
+    endDate: details.endDate,
+    totalAmountPaid: details.totalAmountPaid,
+    paymentRecordedAt: details.totalAmountPaid && details.totalAmountPaid > 0 ? now : undefined,
     notes: details.notes?.trim() || undefined,
     createdAt: now,
     updatedAt: now,
@@ -267,6 +447,9 @@ function normalizeSet(value: unknown, id: number): BeachSet {
     surname: value.surname,
     reservedDays: value.reservedDays,
     partialNote: value.partialNote,
+    price: normalizePositiveMoney(value.price),
+    priceMode: isSetPriceMode(value.priceMode) ? value.priceMode : undefined,
+    dailySaleId: typeof value.dailySaleId === 'string' ? value.dailySaleId : undefined,
     updatedAt: value.updatedAt,
   };
 }
@@ -282,6 +465,11 @@ function normalizeImportedSet(value: unknown, id: number): BeachSet | null {
       ? value.beachReservationId
       : undefined;
   const partialNote = typeof value.partialNote === 'string' ? value.partialNote.trim() : undefined;
+  const price = normalizePositiveMoney(value.price);
+  const priceMode = isSetPriceMode(value.priceMode) ? value.priceMode : undefined;
+  const dailySaleId = typeof value.dailySaleId === 'string' && value.dailySaleId.trim()
+    ? value.dailySaleId
+    : undefined;
   const updatedAt = typeof value.updatedAt === 'string' ? value.updatedAt : undefined;
   const reservedDays =
     typeof value.reservedDays === 'number' && Number.isFinite(value.reservedDays)
@@ -295,6 +483,9 @@ function normalizeImportedSet(value: unknown, id: number): BeachSet | null {
     beachReservationId,
     surname: surname || undefined,
     reservedDays,
+    price,
+    priceMode: price ? priceMode : undefined,
+    dailySaleId,
     partialNote: partialNote || undefined,
     updatedAt,
   };
@@ -312,6 +503,9 @@ function normalizeBed(value: unknown, id: BedId): ExtraBed {
     beachReservationId: value.beachReservationId,
     surname: value.surname,
     reservedDays: value.reservedDays,
+    price: normalizePositiveMoney(value.price),
+    priceMode: isSetPriceMode(value.priceMode) ? value.priceMode : undefined,
+    dailySaleId: typeof value.dailySaleId === 'string' ? value.dailySaleId : undefined,
     updatedAt: value.updatedAt,
   };
 }
@@ -327,6 +521,11 @@ function normalizeImportedBed(value: unknown, id: BedId): ExtraBed | null {
       ? value.beachReservationId
       : undefined;
   const updatedAt = typeof value.updatedAt === 'string' ? value.updatedAt : undefined;
+  const price = normalizePositiveMoney(value.price);
+  const priceMode = isSetPriceMode(value.priceMode) ? value.priceMode : undefined;
+  const dailySaleId = typeof value.dailySaleId === 'string' && value.dailySaleId.trim()
+    ? value.dailySaleId
+    : undefined;
   const reservedDays =
     typeof value.reservedDays === 'number' && Number.isFinite(value.reservedDays)
       ? Math.max(1, Math.floor(value.reservedDays))
@@ -339,6 +538,9 @@ function normalizeImportedBed(value: unknown, id: BedId): ExtraBed | null {
     beachReservationId,
     surname: surname || undefined,
     reservedDays,
+    price,
+    priceMode: price ? priceMode : undefined,
+    dailySaleId,
     updatedAt,
   };
 }
@@ -351,10 +553,18 @@ function normalizeImportedBeachReservation(value: unknown): BeachReservation | n
   const candidate = value as Partial<BeachReservation>;
   const id = typeof candidate.id === 'string' && candidate.id.trim() ? candidate.id : undefined;
   const surname = typeof candidate.surname === 'string' ? normalizeSurname(candidate.surname) : '';
-  const reservedDays =
+  const legacyReservedDays =
     typeof candidate.reservedDays === 'number' && Number.isFinite(candidate.reservedDays)
       ? Math.max(1, Math.floor(candidate.reservedDays))
       : undefined;
+  const startDate = isLocalDateKey(candidate.startDate) ? candidate.startDate : undefined;
+  const endDate = isLocalDateKey(candidate.endDate) ? candidate.endDate : undefined;
+  const migratedStartDate = startDate ?? getLocalDateKey();
+  const migratedEndDate = endDate ?? addDaysToDateKey(migratedStartDate, (legacyReservedDays ?? 1) - 1);
+  const totalAmountPaid = normalizeNonNegativeMoney(candidate.totalAmountPaid);
+  const paymentRecordedAt = typeof candidate.paymentRecordedAt === 'string' && !Number.isNaN(new Date(candidate.paymentRecordedAt).getTime())
+    ? candidate.paymentRecordedAt
+    : undefined;
   const notes = typeof candidate.notes === 'string' ? candidate.notes.trim() : undefined;
   const createdAt =
     typeof candidate.createdAt === 'string' && candidate.createdAt.trim()
@@ -363,14 +573,17 @@ function normalizeImportedBeachReservation(value: unknown): BeachReservation | n
   const updatedAt =
     typeof candidate.updatedAt === 'string' && candidate.updatedAt.trim() ? candidate.updatedAt : undefined;
 
-  if (!id || !surname || !reservedDays) {
+  if (!id || !surname || migratedEndDate < migratedStartDate) {
     return null;
   }
 
   return {
     id,
     surname,
-    reservedDays,
+    startDate: migratedStartDate,
+    endDate: migratedEndDate,
+    totalAmountPaid,
+    paymentRecordedAt,
     notes: notes || undefined,
     createdAt,
     updatedAt,
@@ -393,65 +606,196 @@ function parseBeachReservations(value: unknown): BeachReservation[] {
   }, []);
 }
 
-function createAquaparkReservation(details: {
-  surname: string;
-  reservedDays: number;
-  notes?: string;
-}): AquaparkReservation {
-  const now = new Date().toISOString();
-
-  return {
-    id: createReservationId('aquapark'),
-    surname: normalizeSurname(details.surname),
-    reservedDays: Math.max(1, Math.floor(details.reservedDays) || 1),
-    notes: details.notes?.trim() || undefined,
-    createdAt: now,
-    updatedAt: now,
-  };
-}
-
-function normalizeImportedAquaparkReservation(value: unknown): AquaparkReservation | null {
+function normalizeImportedAquaparkEntry(value: unknown): AquaparkEntry | null {
   if (!value || typeof value !== 'object') {
     return null;
   }
 
-  const candidate = value as Partial<AquaparkReservation>;
+  const candidate = value as Partial<AquaparkEntry> & { defaultPrice?: unknown; finalPrice?: unknown };
   const id = typeof candidate.id === 'string' && candidate.id.trim() ? candidate.id : undefined;
-  const surname = typeof candidate.surname === 'string' ? normalizeSurname(candidate.surname) : '';
-  const reservedDays =
-    typeof candidate.reservedDays === 'number' && Number.isFinite(candidate.reservedDays)
-      ? Math.max(1, Math.floor(candidate.reservedDays))
-      : undefined;
-  const createdAt =
-    typeof candidate.createdAt === 'string' && candidate.createdAt.trim()
-      ? candidate.createdAt
-      : new Date().toISOString();
-  const updatedAt =
-    typeof candidate.updatedAt === 'string' && candidate.updatedAt.trim() ? candidate.updatedAt : undefined;
-  const notes = typeof candidate.notes === 'string' ? candidate.notes.trim() : undefined;
+  const wristbands = Array.isArray(candidate.wristbands)
+    ? [...new Set(candidate.wristbands.filter((wristband) => Number.isSafeInteger(wristband) && wristband > 0))]
+    : [];
+  const ticketType = isAquaparkTicketType(candidate.ticketType) ? candidate.ticketType : undefined;
+  const defaultUnitPrice = normalizePositiveMoney(candidate.defaultUnitPrice) ?? normalizePositiveMoney(candidate.defaultPrice);
+  const storedUnitPrice = normalizePositiveMoney(candidate.unitPrice);
+  const storedTotalPrice = normalizePositiveMoney(candidate.totalPrice);
+  const legacyFinalPrice = normalizePositiveMoney(candidate.finalPrice);
+  const isLegacyPrice = !storedUnitPrice && !storedTotalPrice && Boolean(legacyFinalPrice);
+  const unitPrice = storedUnitPrice ?? legacyFinalPrice;
+  const totalPrice = storedTotalPrice ?? legacyFinalPrice;
+  const priceMode = isAquaparkPriceMode(candidate.priceMode) ? candidate.priceMode : undefined;
+  const startAt = typeof candidate.startAt === 'string' && !Number.isNaN(new Date(candidate.startAt).getTime())
+    ? candidate.startAt
+    : undefined;
+  const endAt = typeof candidate.endAt === 'string' && !Number.isNaN(new Date(candidate.endAt).getTime())
+    ? candidate.endAt
+    : undefined;
+  const validUntil = typeof candidate.validUntil === 'string' && !Number.isNaN(new Date(candidate.validUntil).getTime())
+    ? candidate.validUntil
+    : undefined;
+  const description = typeof candidate.description === 'string' ? candidate.description.trim() || undefined : undefined;
+  const createdAt = typeof candidate.createdAt === 'string' && !Number.isNaN(new Date(candidate.createdAt).getTime())
+    ? candidate.createdAt
+    : startAt;
+  const closedAt = typeof candidate.closedAt === 'string' && !Number.isNaN(new Date(candidate.closedAt).getTime())
+    ? candidate.closedAt
+    : undefined;
 
-  if (!id || !surname || !reservedDays) {
+  if (!id || !wristbands.length || !ticketType || !defaultUnitPrice || !unitPrice || !totalPrice || !priceMode || !startAt || !createdAt) {
+    return null;
+  }
+
+  const customDays = ticketType === 'custom_days' && Number.isSafeInteger(candidate.customDays) && (candidate.customDays as number) > 0
+    ? candidate.customDays as number
+    : undefined;
+  const dailyUnitPrice = ticketType === 'custom_days'
+    ? normalizePositiveMoney(candidate.dailyUnitPrice) ?? unitPrice
+    : undefined;
+
+  if ((ticketType === 'one_week' || ticketType === 'custom_days') ? !validUntil : !endAt) {
+    return null;
+  }
+
+  if (ticketType === 'custom_days' && (!customDays || !dailyUnitPrice)) {
     return null;
   }
 
   return {
     id,
-    surname,
-    reservedDays,
-    notes: notes || undefined,
+    wristbands,
+    ticketType,
+    defaultUnitPrice,
+    unitPrice,
+    totalPrice,
+    priceMode,
+    status: candidate.status === 'closed' ? 'closed' : 'active',
+    isLegacyPrice: isLegacyPrice || undefined,
+    startAt,
+    endAt,
+    validUntil,
+    customDays,
+    dailyUnitPrice,
+    description,
     createdAt,
-    updatedAt,
+    closedAt,
   };
 }
 
-function parseAquaparkReservations(value: unknown): AquaparkReservation[] {
+function parseAquaparkEntries(value: unknown): AquaparkEntry[] {
   if (!Array.isArray(value)) {
     return [];
   }
 
-  return value.reduce<AquaparkReservation[]>((reservations, rawReservation) => {
-    const reservation = normalizeImportedAquaparkReservation(rawReservation);
-    return reservation ? [...reservations, reservation] : reservations;
+  return value.reduce<AquaparkEntry[]>((entries, rawEntry) => {
+    const entry = normalizeImportedAquaparkEntry(rawEntry);
+    return entry && !entries.some((existing) => existing.id === entry.id) ? [...entries, entry] : entries;
+  }, []);
+}
+
+function normalizeImportedDailySale(value: unknown): DailySale | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const candidate = value as Partial<DailySale>;
+  const id = typeof candidate.id === 'string' && candidate.id.trim() ? candidate.id : undefined;
+  const amount = normalizePositiveMoney(candidate.amount);
+  const createdAt = typeof candidate.createdAt === 'string' && !Number.isNaN(new Date(candidate.createdAt).getTime())
+    ? candidate.createdAt
+    : undefined;
+
+  if (!id || !amount || !createdAt) {
+    return null;
+  }
+
+  if (candidate.kind === 'beach_set' && Number.isInteger(candidate.setId) && (candidate.setId as number) >= 1 && (candidate.setId as number) <= TOTAL_SETS) {
+    return { id, kind: 'beach_set', setId: candidate.setId as number, amount, createdAt };
+  }
+
+  if (candidate.kind === 'bed' && EXTRA_BED_IDS.includes(candidate.bedId as BedId)) {
+    return { id, kind: 'bed', bedId: candidate.bedId as BedId, amount, createdAt };
+  }
+
+  if (
+    candidate.kind === 'sunbed' &&
+    typeof candidate.sunbedSaleId === 'string' &&
+    Number.isSafeInteger(candidate.quantity) &&
+    (candidate.quantity as number) > 0
+  ) {
+    return {
+      id,
+      kind: 'sunbed',
+      sunbedSaleId: candidate.sunbedSaleId,
+      quantity: candidate.quantity as number,
+      amount,
+      createdAt,
+    };
+  }
+
+  if (
+    candidate.kind === 'aquapark_entry' &&
+    typeof candidate.entryId === 'string' &&
+    isAquaparkTicketType(candidate.ticketType) &&
+    Number.isSafeInteger(candidate.wristbandCount) &&
+    (candidate.wristbandCount as number) > 0 &&
+    normalizePositiveMoney(candidate.unitPrice)
+  ) {
+    return {
+      id,
+      kind: 'aquapark_entry',
+      entryId: candidate.entryId,
+      ticketType: candidate.ticketType,
+      wristbandCount: candidate.wristbandCount as number,
+      unitPrice: normalizePositiveMoney(candidate.unitPrice) as number,
+      customDays: candidate.ticketType === 'custom_days' && Number.isSafeInteger(candidate.customDays) && (candidate.customDays as number) > 0
+        ? candidate.customDays as number
+        : undefined,
+      amount,
+      createdAt,
+    };
+  }
+
+  return null;
+}
+
+function normalizeImportedSunbedSale(value: unknown): NonNumberedSunbedSale | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const candidate = value as Partial<NonNumberedSunbedSale>;
+  const id = typeof candidate.id === 'string' && candidate.id.trim() ? candidate.id : undefined;
+  const quantity = Number.isSafeInteger(candidate.quantity) && (candidate.quantity as number) > 0
+    ? candidate.quantity as number
+    : undefined;
+  const totalAmount = normalizePositiveMoney(candidate.totalAmount);
+  const createdAt = typeof candidate.createdAt === 'string' && !Number.isNaN(new Date(candidate.createdAt).getTime())
+    ? candidate.createdAt
+    : undefined;
+
+  return id && quantity && totalAmount && createdAt ? { id, quantity, totalAmount, createdAt } : null;
+}
+
+function parseSunbedSales(value: unknown): NonNumberedSunbedSale[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.reduce<NonNumberedSunbedSale[]>((sales, rawSale) => {
+    const sale = normalizeImportedSunbedSale(rawSale);
+    return sale && !sales.some((existing) => existing.id === sale.id) ? [...sales, sale] : sales;
+  }, []);
+}
+
+function parseDailySales(value: unknown): DailySale[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.reduce<DailySale[]>((sales, rawSale) => {
+    const sale = normalizeImportedDailySale(rawSale);
+    return sale && !sales.some((existing) => existing.id === sale.id) ? [...sales, sale] : sales;
   }, []);
 }
 
@@ -522,17 +866,20 @@ function migrateLegacyBeachReservations(
 
   function getOrCreateReservation(surname: string, reservedDays: number): BeachReservation {
     const normalizedSurname = normalizeSurname(surname);
+    const startDate = getLocalDateKey();
+    const endDate = addDaysToDateKey(startDate, reservedDays - 1);
     const existing = beachReservations.find(
       (reservation) =>
         getSurnameKey(reservation.surname) === getSurnameKey(normalizedSurname) &&
-        reservation.reservedDays === reservedDays,
+        reservation.startDate === startDate &&
+        reservation.endDate === endDate,
     );
 
     if (existing) {
       return existing;
     }
 
-    const reservation = createBeachReservation({ surname: normalizedSurname, reservedDays });
+    const reservation = createBeachReservation({ surname: normalizedSurname, startDate, endDate });
     beachReservations = [...beachReservations, reservation];
     reservationIds.add(reservation.id);
     return reservation;
@@ -605,7 +952,9 @@ function parseImportedAppData(value: unknown): AppData | null {
     extraBeds?: unknown;
     beachReservations?: unknown;
     savedSurnames?: unknown;
-    aquaparkReservations?: unknown;
+    sunbedSales?: unknown;
+    aquaparkEntries?: unknown;
+    dailySales?: unknown;
   };
   const sets = payload.sets ? parseSets(payload.sets) : parseSets(value);
 
@@ -630,7 +979,9 @@ function parseImportedAppData(value: unknown): AppData | null {
     extraBeds: migratedBeachData.extraBeds,
     beachReservations: migratedBeachData.beachReservations,
     savedSurnames: normalizeSavedSurnames(payload.savedSurnames),
-    aquaparkReservations: parseAquaparkReservations(payload.aquaparkReservations),
+    sunbedSales: parseSunbedSales(payload.sunbedSales),
+    aquaparkEntries: parseAquaparkEntries(payload.aquaparkEntries),
+    dailySales: parseDailySales(payload.dailySales),
     lastAutomaticResetDate: normalizeResetDate(payload.lastAutomaticResetDate),
   };
 }
@@ -665,7 +1016,9 @@ function loadSavedAppData(): AppData {
         extraBeds?: unknown;
         beachReservations?: unknown;
         savedSurnames?: unknown;
-        aquaparkReservations?: unknown;
+        sunbedSales?: unknown;
+        aquaparkEntries?: unknown;
+        dailySales?: unknown;
         lastAutomaticResetDate?: unknown;
       };
       const sets = parseSets(parsed.sets, true);
@@ -683,7 +1036,9 @@ function loadSavedAppData(): AppData {
           extraBeds: migratedBeachData.extraBeds,
           beachReservations: migratedBeachData.beachReservations,
           savedSurnames: normalizeSavedSurnames(parsed.savedSurnames),
-          aquaparkReservations: parseAquaparkReservations(parsed.aquaparkReservations),
+          sunbedSales: parseSunbedSales(parsed.sunbedSales),
+          aquaparkEntries: parseAquaparkEntries(parsed.aquaparkEntries),
+          dailySales: parseDailySales(parsed.dailySales),
           lastAutomaticResetDate: normalizeResetDate(parsed.lastAutomaticResetDate),
         };
       }
@@ -697,7 +1052,6 @@ function loadSavedAppData(): AppData {
         extraBeds?: unknown;
         beachReservations?: unknown;
         savedSurnames?: unknown;
-        aquaparkReservations?: unknown;
       };
       const legacySets = parsed.sets ? parseSets(parsed.sets, true) : parseSets(parsed, true);
       const legacyExtraBeds = parsed.extraBeds ? parseExtraBeds(parsed.extraBeds, true) : createFreeExtraBeds();
@@ -714,7 +1068,9 @@ function loadSavedAppData(): AppData {
           extraBeds: migratedBeachData.extraBeds,
           beachReservations: migratedBeachData.beachReservations,
           savedSurnames: normalizeSavedSurnames(parsed.savedSurnames),
-          aquaparkReservations: parseAquaparkReservations(parsed.aquaparkReservations),
+          sunbedSales: [],
+          aquaparkEntries: [],
+          dailySales: [],
         };
       }
     }
@@ -738,7 +1094,9 @@ function loadSavedAppData(): AppData {
           extraBeds: migratedBeachData.extraBeds,
           beachReservations: migratedBeachData.beachReservations,
           savedSurnames: [],
-          aquaparkReservations: [],
+          sunbedSales: [],
+          aquaparkEntries: [],
+          dailySales: [],
         };
       }
     }
@@ -756,7 +1114,9 @@ function loadSavedAppData(): AppData {
           extraBeds: migratedBeachData.extraBeds,
           beachReservations: migratedBeachData.beachReservations,
           savedSurnames: [],
-          aquaparkReservations: [],
+          sunbedSales: [],
+          aquaparkEntries: [],
+          dailySales: [],
         };
       }
     }
@@ -771,7 +1131,9 @@ function loadSavedAppData(): AppData {
         extraBeds: migratedBeachData.extraBeds,
         beachReservations: migratedBeachData.beachReservations,
         savedSurnames: [],
-        aquaparkReservations: [],
+        sunbedSales: [],
+        aquaparkEntries: [],
+        dailySales: [],
       };
     }
 
@@ -788,10 +1150,12 @@ function getSets(start: number, end: number) {
 function updateSetStatus(set: BeachSet, status: SetStatus, details: Partial<BeachSet> = {}): BeachSet {
   const clearedDetails =
     status === 'reserved'
-      ? { partialNote: undefined }
-      : status === 'partial'
-        ? { beachReservationId: undefined, surname: undefined, reservedDays: undefined }
-        : { beachReservationId: undefined, surname: undefined, reservedDays: undefined, partialNote: undefined };
+      ? { partialNote: undefined, price: undefined, priceMode: undefined, dailySaleId: undefined }
+    : status === 'partial'
+        ? { beachReservationId: undefined, surname: undefined, reservedDays: undefined, price: undefined, priceMode: undefined, dailySaleId: undefined }
+        : status === 'paid'
+          ? { beachReservationId: undefined, surname: undefined, reservedDays: undefined, partialNote: undefined }
+          : { beachReservationId: undefined, surname: undefined, reservedDays: undefined, partialNote: undefined, price: undefined, priceMode: undefined, dailySaleId: undefined };
 
   return {
     ...set,
@@ -804,7 +1168,11 @@ function updateSetStatus(set: BeachSet, status: SetStatus, details: Partial<Beac
 
 function updateBedStatus(bed: ExtraBed, status: BedStatus, details: Partial<ExtraBed> = {}): ExtraBed {
   const clearedDetails =
-    status === 'reserved' ? {} : { beachReservationId: undefined, surname: undefined, reservedDays: undefined };
+    status === 'reserved'
+      ? { price: undefined, priceMode: undefined, dailySaleId: undefined }
+      : status === 'paid'
+        ? { beachReservationId: undefined, surname: undefined, reservedDays: undefined }
+        : { beachReservationId: undefined, surname: undefined, reservedDays: undefined, price: undefined, priceMode: undefined, dailySaleId: undefined };
 
   return {
     ...bed,
@@ -828,37 +1196,103 @@ function applyDailyResetToBeds(currentBeds: ExtraBedMap): ExtraBedMap {
 }
 
 function applyDailyResetToBeachReservations(currentReservations: BeachReservation[]): BeachReservation[] {
-  return currentReservations.flatMap((reservation) => {
-    if (reservation.reservedDays <= 1) {
-      return [];
-    }
-
-    return [
-      {
-        ...reservation,
-        reservedDays: reservation.reservedDays - 1,
-        updatedAt: new Date().toISOString(),
-      },
-    ];
-  });
+  return currentReservations;
 }
 
-function applyDailyResetToAquaparkReservations(
-  currentReservations: AquaparkReservation[],
-): AquaparkReservation[] {
-  return currentReservations.flatMap((reservation) => {
-    if (reservation.reservedDays <= 1) {
-      return [];
-    }
+function roundToNearestFiveMinutes(date: Date): Date {
+  const rounded = new Date(date);
+  rounded.setSeconds(0, 0);
+  rounded.setMinutes(Math.round(rounded.getMinutes() / 5) * 5);
+  return rounded;
+}
 
-    return [
-      {
-        ...reservation,
-        reservedDays: reservation.reservedDays - 1,
-        updatedAt: new Date().toISOString(),
-      },
-    ];
-  });
+function getAquaparkEntryTiming(ticketType: AquaparkTicketType, startAt: Date, customDays?: number) {
+  const end = new Date(startAt);
+
+  if (ticketType === 'one_week') {
+    end.setDate(end.getDate() + 7);
+    return { validUntil: end.toISOString() };
+  }
+
+  if (ticketType === 'custom_days' && customDays) {
+    end.setDate(end.getDate() + customDays - 1);
+    return { validUntil: end.toISOString() };
+  }
+
+  if (ticketType === '30min') {
+    end.setMinutes(end.getMinutes() + 40);
+    return { endAt: roundToNearestFiveMinutes(end).toISOString() };
+  }
+
+  if (ticketType === '1hour') {
+    end.setMinutes(end.getMinutes() + 70);
+    return { endAt: roundToNearestFiveMinutes(end).toISOString() };
+  }
+
+  if (ticketType === 'half_day') {
+    end.setHours(end.getHours() + 6);
+    const roundedEnd = roundToNearestFiveMinutes(end);
+    const closingTime = new Date(startAt);
+    closingTime.setHours(20, 0, 0, 0);
+    return { endAt: (roundedEnd > closingTime ? closingTime : roundedEnd).toISOString() };
+  }
+
+  end.setHours(20, 0, 0, 0);
+  return { endAt: end.toISOString() };
+}
+
+function createAquaparkEntry(details: AquaparkEntryDetails): AquaparkEntry {
+  const start = new Date();
+  const ticket = AQUAPARK_TICKETS[details.ticketType];
+  const customDays = details.ticketType === 'custom_days' ? details.customDays : undefined;
+  const customDailyUnitPrice = details.ticketType === 'custom_days'
+    ? normalizePositiveMoney(details.dailyUnitPrice)
+    : undefined;
+  const specialPrice = normalizePositiveMoney(details.specialPrice);
+  const unitPrice = customDailyUnitPrice ?? specialPrice ?? ticket.price;
+  const quantityMultiplier = details.ticketType === 'custom_days' ? customDays ?? 1 : 1;
+  const hasCustomPriceOverride = details.ticketType === 'custom_days' && customDailyUnitPrice !== undefined && customDailyUnitPrice !== ticket.price;
+
+  return {
+    id: createReservationId('aquapark-entry'),
+    wristbands: details.wristbands,
+    ticketType: details.ticketType,
+    defaultUnitPrice: ticket.price,
+    unitPrice,
+    totalPrice: Math.round(details.wristbands.length * quantityMultiplier * unitPrice * 100) / 100,
+    priceMode: hasCustomPriceOverride || specialPrice ? 'special' : 'default',
+    status: 'active',
+    startAt: start.toISOString(),
+    ...getAquaparkEntryTiming(details.ticketType, start, customDays),
+    customDays,
+    dailyUnitPrice: details.ticketType === 'custom_days' ? unitPrice : undefined,
+    description: details.description?.trim() || undefined,
+    createdAt: start.toISOString(),
+  };
+}
+
+function isAquaparkEntryExpired(entry: AquaparkEntry, currentTime: Date): boolean {
+  const expiryTime = entry.ticketType === 'one_week' || entry.ticketType === 'custom_days'
+    ? entry.validUntil
+    : entry.endAt;
+  return expiryTime ? currentTime.getTime() > new Date(expiryTime).getTime() : false;
+}
+
+function formatTime(value: string): string {
+  return new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value));
+}
+
+function parseWristbandNumbers(value: string): { wristbands: number[]; error?: string } {
+  const parts = value.split(',').map((part) => part.trim());
+
+  if (!parts.length || parts.some((part) => !/^\d+$/.test(part))) {
+    return { wristbands: [], error: 'Enter one or more positive wristband numbers, separated by commas.' };
+  }
+
+  const wristbands = [...new Set(parts.map(Number))];
+  return wristbands.every((wristband) => Number.isSafeInteger(wristband) && wristband > 0)
+    ? { wristbands }
+    : { wristbands: [], error: 'Wristband numbers must be positive whole numbers.' };
 }
 
 function initializeAppDataForToday(appData: AppData, today = getLocalDateKey()): AppData {
@@ -877,7 +1311,8 @@ function initializeAppDataForToday(appData: AppData, today = getLocalDateKey()):
     sets: applyDailyResetToSets(appData.sets),
     extraBeds: applyDailyResetToBeds(appData.extraBeds),
     beachReservations: applyDailyResetToBeachReservations(appData.beachReservations),
-    aquaparkReservations: applyDailyResetToAquaparkReservations(appData.aquaparkReservations),
+    sunbedSales: [],
+    dailySales: [],
     lastAutomaticResetDate: today,
   };
 }
@@ -941,25 +1376,29 @@ function getBeachReservations(
     return {
       id: reservation.id,
       surname: reservation.surname,
-      reservedDays: reservation.reservedDays,
+      startDate: reservation.startDate,
+      endDate: reservation.endDate,
+      totalAmountPaid: reservation.totalAmountPaid,
       notes: reservation.notes,
       assignmentLabel: formatBeachAssignmentLabel(assignments),
     };
   }).sort(
-    (first, second) => first.reservedDays - second.reservedDays || first.surname.localeCompare(second.surname),
+    (first, second) => first.endDate.localeCompare(second.endDate) || first.surname.localeCompare(second.surname),
   );
 }
 
 function createBackupPayload(appData: AppData): BackupPayload {
   return {
     app: 'Beach Set Manager',
-    version: 6,
+    version: 10,
     exportedAt: new Date().toISOString(),
     sets: appData.sets,
     extraBeds: appData.extraBeds,
     beachReservations: appData.beachReservations,
     savedSurnames: appData.savedSurnames,
-    aquaparkReservations: appData.aquaparkReservations,
+    sunbedSales: appData.sunbedSales,
+    aquaparkEntries: appData.aquaparkEntries,
+    dailySales: appData.dailySales,
     lastAutomaticResetDate: appData.lastAutomaticResetDate,
   };
 }
@@ -974,9 +1413,14 @@ function App() {
   const [savedSurnames, setSavedSurnames] = useState<ReservationSurname[]>(
     () => initialAppData.savedSurnames,
   );
-  const [aquaparkReservations, setAquaparkReservations] = useState<AquaparkReservation[]>(
-    () => initialAppData.aquaparkReservations,
+  const [sunbedSales, setSunbedSales] = useState<NonNumberedSunbedSale[]>(
+    () => initialAppData.sunbedSales,
   );
+  const [aquaparkEntries, setAquaparkEntries] = useState<AquaparkEntry[]>(
+    () => initialAppData.aquaparkEntries,
+  );
+  const [dailySales, setDailySales] = useState<DailySale[]>(() => initialAppData.dailySales);
+  const [currentTime, setCurrentTime] = useState(() => new Date());
   const [lastAutomaticResetDate, setLastAutomaticResetDate] = useState(
     () => initialAppData.lastAutomaticResetDate ?? getLocalDateKey(),
   );
@@ -998,11 +1442,18 @@ function App() {
         extraBeds,
         beachReservations,
         savedSurnames,
-        aquaparkReservations,
+        sunbedSales,
+        aquaparkEntries,
+        dailySales,
         lastAutomaticResetDate,
       }),
     );
-  }, [sets, extraBeds, beachReservations, savedSurnames, aquaparkReservations, lastAutomaticResetDate]);
+  }, [sets, extraBeds, beachReservations, savedSurnames, sunbedSales, aquaparkEntries, dailySales, lastAutomaticResetDate]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setCurrentTime(new Date()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (!hasMountedTabScroll.current) {
@@ -1042,22 +1493,22 @@ function App() {
 
   const activeSet = activeEditor?.kind === 'set' ? sets[activeEditor.id] : null;
   const activeBed = activeEditor?.kind === 'bed' ? extraBeds[activeEditor.id] : null;
-  const activeAquaparkReservation =
-    activeEditor?.kind === 'aquapark' && activeEditor.id
-      ? aquaparkReservations.find((reservation) => reservation.id === activeEditor.id) ?? null
-      : null;
   const activeBeachReservation =
     activeEditor?.kind === 'beachReservation'
       ? beachReservations.find((reservation) => reservation.id === activeEditor.id) ?? null
       : null;
+  const activeSunbedSale = activeEditor?.kind === 'sunbedSale' && activeEditor.id
+    ? sunbedSales.find((sale) => sale.id === activeEditor.id) ?? null
+    : null;
 
   function completeDailyReset(resetDate: string, message?: string) {
     lastAutomaticResetDateRef.current = resetDate;
     setLastAutomaticResetDate(resetDate);
     setSets((currentSets) => applyDailyResetToSets(currentSets));
     setExtraBeds((currentBeds) => applyDailyResetToBeds(currentBeds));
-    setBeachReservations((currentReservations) => applyDailyResetToBeachReservations(currentReservations));
-    setAquaparkReservations((currentReservations) => applyDailyResetToAquaparkReservations(currentReservations));
+      setBeachReservations((currentReservations) => applyDailyResetToBeachReservations(currentReservations));
+    setSunbedSales([]);
+    setDailySales([]);
     closeEditor();
 
     if (message) {
@@ -1114,7 +1565,7 @@ function App() {
   }, []);
 
   function scrollToTabSection(tabId: TabId) {
-    if (tabId === 'aquapark') {
+    if (tabId === 'aquapark' || tabId === 'sunbeds' || tabId === 'report') {
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
@@ -1142,12 +1593,16 @@ function App() {
     setActiveEditor({ kind: 'bed', id: bedId });
   }
 
-  function openNewAquaparkReservation() {
-    setActiveEditor({ kind: 'aquapark' });
+  function openNewAquaparkEntry() {
+    setActiveEditor({ kind: 'aquaparkEntry' });
   }
 
-  function openAquaparkReservation(reservationId: string) {
-    setActiveEditor({ kind: 'aquapark', id: reservationId });
+  function openNewSunbedSale() {
+    setActiveEditor({ kind: 'sunbedSale' });
+  }
+
+  function openSunbedSale(saleId: string) {
+    setActiveEditor({ kind: 'sunbedSale', id: saleId });
   }
 
   function openBeachReservation(reservationId: string) {
@@ -1159,16 +1614,48 @@ function App() {
   }
 
   function saveSet(setId: number, status: SetStatus, details?: Partial<BeachSet>) {
+    const price = status === 'paid' ? normalizePositiveMoney(details?.price) : undefined;
+    const existingSaleId = sets[setId].dailySaleId;
+    const dailySaleId = status === 'paid' && price ? existingSaleId ?? createReservationId('beach-sale') : undefined;
+
+    if (status === 'paid' && price && dailySaleId) {
+      const now = new Date().toISOString();
+      setDailySales((currentSales) => {
+        const existingSale = currentSales.find((sale) => sale.id === dailySaleId);
+
+        if (existingSale?.kind === 'beach_set') {
+          return currentSales.map((sale) => sale.id === dailySaleId ? { ...sale, amount: price } : sale);
+        }
+
+        return [...currentSales, { id: dailySaleId, kind: 'beach_set', setId, amount: price, createdAt: now }];
+      });
+    }
+
     setSets((currentSets) => ({
       ...currentSets,
-      [setId]: updateSetStatus(currentSets[setId], status, details),
+      [setId]: updateSetStatus(currentSets[setId], status, { ...details, dailySaleId }),
     }));
   }
 
   function saveBed(bedId: BedId, status: BedStatus, details?: Partial<ExtraBed>) {
+    const price = status === 'paid' ? normalizePositiveMoney(details?.price) : undefined;
+    const existingSaleId = extraBeds[bedId].dailySaleId;
+    const dailySaleId = status === 'paid' && price ? existingSaleId ?? createReservationId('bed-sale') : undefined;
+
+    if (status === 'paid' && price && dailySaleId) {
+      const now = new Date().toISOString();
+      setDailySales((currentSales) => {
+        const existingSale = currentSales.find((sale) => sale.id === dailySaleId);
+        if (existingSale?.kind === 'bed') {
+          return currentSales.map((sale) => sale.id === dailySaleId ? { ...sale, amount: price } : sale);
+        }
+        return [...currentSales, { id: dailySaleId, kind: 'bed', bedId, amount: price, createdAt: now }];
+      });
+    }
+
     setExtraBeds((currentBeds) => ({
       ...currentBeds,
-      [bedId]: updateBedStatus(currentBeds[bedId], status, details),
+      [bedId]: updateBedStatus(currentBeds[bedId], status, { ...details, dailySaleId }),
     }));
   }
 
@@ -1192,7 +1679,7 @@ function App() {
       [setId]: updateSetStatus(currentSets[setId], 'reserved', {
         beachReservationId: reservation.id,
         surname: reservation.surname,
-        reservedDays: reservation.reservedDays,
+        reservedDays: getInclusiveDateDays(reservation.startDate, reservation.endDate),
       }),
     }));
     closeEditor();
@@ -1204,7 +1691,7 @@ function App() {
       [bedId]: updateBedStatus(currentBeds[bedId], 'reserved', {
         beachReservationId: reservation.id,
         surname: reservation.surname,
-        reservedDays: reservation.reservedDays,
+        reservedDays: getInclusiveDateDays(reservation.startDate, reservation.endDate),
       }),
     }));
     closeEditor();
@@ -1312,7 +1799,10 @@ function App() {
           ? {
               ...reservation,
               surname,
-              reservedDays: Math.max(1, Math.floor(details.reservedDays) || 1),
+              startDate: details.startDate,
+              endDate: details.endDate,
+              totalAmountPaid: details.totalAmountPaid,
+              paymentRecordedAt: reservation.paymentRecordedAt,
               notes: details.notes?.trim() || undefined,
               updatedAt: new Date().toISOString(),
             }
@@ -1328,51 +1818,85 @@ function App() {
     );
   }
 
-  function saveAquaparkReservation(
-    reservationId: string | undefined,
-    details: { surname: string; reservedDays: number; notes?: string },
-  ) {
-    const surname = normalizeSurname(details.surname);
+  function saveSunbedSale(details: { quantity: number; totalAmount: number }, saleId?: string) {
+    const now = new Date().toISOString();
+    const id = saleId ?? createReservationId('sunbed-sale');
+    const sale: NonNumberedSunbedSale = { id, quantity: details.quantity, totalAmount: details.totalAmount, createdAt: now };
 
-    if (!surname) {
-      return;
-    }
-
-    saveReservationSurname(surname);
-
-    if (!reservationId) {
-      setAquaparkReservations((currentReservations) => [
-        createAquaparkReservation({ ...details, surname }),
-        ...currentReservations,
-      ]);
-      closeEditor();
-      return;
-    }
-
-    setAquaparkReservations((currentReservations) =>
-      currentReservations.map((reservation) =>
-        reservation.id === reservationId
-          ? {
-              ...reservation,
-              surname,
-              reservedDays: Math.max(1, Math.floor(details.reservedDays) || 1),
-              notes: details.notes?.trim() || undefined,
-              updatedAt: new Date().toISOString(),
-            }
-          : reservation,
-      ),
+    setSunbedSales((currentSales) => saleId
+      ? currentSales.map((currentSale) => currentSale.id === saleId ? { ...sale, createdAt: currentSale.createdAt } : currentSale)
+      : [sale, ...currentSales],
     );
+    setDailySales((currentSales) => {
+      const existing = currentSales.find((currentSale) => currentSale.id === id);
+      if (existing?.kind === 'sunbed') {
+        return currentSales.map((currentSale) => currentSale.id === id
+          ? { ...currentSale, quantity: details.quantity, amount: details.totalAmount }
+          : currentSale,
+        );
+      }
+      return [...currentSales, { id, kind: 'sunbed', sunbedSaleId: id, quantity: details.quantity, amount: details.totalAmount, createdAt: now }];
+    });
     closeEditor();
   }
 
-  function deleteAquaparkReservation(reservationId: string) {
-    const confirmed = window.confirm('Cancel this Aquapark reservation?');
+  function deleteSunbedSale(saleId: string) {
+    if (!window.confirm('Delete this sunbed sale?')) {
+      return;
+    }
+    setSunbedSales((currentSales) => currentSales.filter((sale) => sale.id !== saleId));
+    setDailySales((currentSales) => currentSales.filter((sale) => sale.id !== saleId));
+  }
+
+  function saveAquaparkEntry(details: AquaparkEntryDetails) {
+    const conflictingEntries = aquaparkEntries.filter(
+      (entry) =>
+        entry.status === 'active' &&
+        !isAquaparkEntryExpired(entry, new Date()) &&
+        entry.wristbands.some((wristband) => details.wristbands.includes(wristband)),
+    );
+
+    if (conflictingEntries.length) {
+      const conflictingWristbands = [...new Set(
+        conflictingEntries.flatMap((entry) => entry.wristbands.filter((wristband) => details.wristbands.includes(wristband))),
+      )].join(', ');
+      const confirmed = window.confirm(
+        `Wristband ${conflictingWristbands} is already active in the Aquapark tracker. Create another entry anyway?`,
+      );
+
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    const entry = createAquaparkEntry(details);
+    setAquaparkEntries((currentEntries) => [entry, ...currentEntries]);
+    setDailySales((currentSales) => [
+      ...currentSales,
+      {
+        id: createReservationId('aquapark-sale'),
+        kind: 'aquapark_entry',
+        entryId: entry.id,
+        ticketType: entry.ticketType,
+        wristbandCount: entry.wristbands.length,
+        unitPrice: entry.unitPrice,
+        customDays: entry.customDays,
+        amount: entry.totalPrice,
+        createdAt: entry.createdAt,
+      },
+    ]);
+    closeEditor();
+  }
+
+  function deleteAquaparkEntry(entryId: string) {
+    const confirmed = window.confirm('Close this Aquapark wristband entry? It will remain in today\'s sales report.');
 
     if (confirmed) {
-      setAquaparkReservations((currentReservations) =>
-        currentReservations.filter((reservation) => reservation.id !== reservationId),
+      setAquaparkEntries((currentEntries) =>
+        currentEntries.map((entry) => (
+          entry.id === entryId ? { ...entry, status: 'closed', closedAt: new Date().toISOString() } : entry
+        )),
       );
-      closeEditor();
     }
   }
 
@@ -1420,7 +1944,9 @@ function App() {
       extraBeds,
       beachReservations,
       savedSurnames,
-      aquaparkReservations,
+      sunbedSales,
+      aquaparkEntries,
+      dailySales,
       lastAutomaticResetDate,
     });
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
@@ -1463,7 +1989,9 @@ function App() {
         setExtraBeds(imported.extraBeds);
         setBeachReservations(imported.beachReservations);
         setSavedSurnames(imported.savedSurnames);
-        setAquaparkReservations(imported.aquaparkReservations);
+        setSunbedSales(imported.sunbedSales);
+        setAquaparkEntries(imported.aquaparkEntries);
+        setDailySales(imported.dailySales);
         const importedResetDate = imported.lastAutomaticResetDate ?? getLocalDateKey();
         lastAutomaticResetDateRef.current = importedResetDate;
         setLastAutomaticResetDate(importedResetDate);
@@ -1482,15 +2010,14 @@ function App() {
   function resetDay() {
     const confirmed = window.confirm(
       [
-        'Daily Reset will update all 56 sets, 4 extra beds, and Aquapark reservations.',
+        'Daily Reset will update all 56 sets, 4 extra beds, and the current-day sales report.',
         '',
         '- Paid sets and beds become free.',
         '- Partial sets become free.',
         '- Beach set and bed assignments are cleared.',
-        '- Saved Beach reservations lose 1 reserved day.',
-        '- Beach reservations with 1 day left are removed.',
-        '- Aquapark reservations lose 1 reserved day.',
-        '- Aquapark reservations with 1 day left are removed.',
+        '- Beach reservation date ranges are preserved.',
+        '- Non-numbered Sunbed sales are cleared.',
+        '- Current-day recorded sales are cleared for the new report.',
         '',
         'Continue?',
       ].join('\n'),
@@ -1512,7 +2039,9 @@ function App() {
       setExtraBeds(createFreeExtraBeds());
       setBeachReservations([]);
       setSavedSurnames([]);
-      setAquaparkReservations([]);
+      setSunbedSales([]);
+      setAquaparkEntries([]);
+      setDailySales([]);
       const today = getLocalDateKey();
       lastAutomaticResetDateRef.current = today;
       setLastAutomaticResetDate(today);
@@ -1528,9 +2057,14 @@ function App() {
           <p className="eyebrow">Summer shift board</p>
           <h1>Beach Set Manager</h1>
         </div>
-        <button className="reset-button" type="button" onClick={resetDay}>
-          Daily Reset
-        </button>
+        <div className="topbar-actions">
+          <button className="report-button" type="button" onClick={() => selectTab('report')}>
+            Report
+          </button>
+          <button className="reset-button" type="button" onClick={resetDay}>
+            Daily Reset
+          </button>
+        </div>
       </header>
 
       <details className="local-tools">
@@ -1558,13 +2092,22 @@ function App() {
         <SavedSurnamesManager savedSurnames={savedSurnames} onDeleteSurname={deleteSavedSurname} />
       </details>
 
-      {activeTab === 'aquapark' ? (
-        <AquaparkPage
-          reservations={aquaparkReservations}
-          onCreateReservation={openNewAquaparkReservation}
-          onEditReservation={openAquaparkReservation}
-          onDeleteReservation={deleteAquaparkReservation}
+      {activeTab === 'sunbeds' ? (
+        <SunbedsPage
+          sales={sunbedSales}
+          onCreateSale={openNewSunbedSale}
+          onEditSale={openSunbedSale}
+          onDeleteSale={deleteSunbedSale}
         />
+      ) : activeTab === 'aquapark' ? (
+        <AquaparkPage
+          entries={aquaparkEntries}
+          currentTime={currentTime}
+          onCreateEntry={openNewAquaparkEntry}
+          onDeleteEntry={deleteAquaparkEntry}
+        />
+      ) : activeTab === 'report' ? (
+        <DailyReport sales={dailySales} reservations={beachReservations} />
       ) : (
         <>
           <ActiveReservationsSection
@@ -1639,12 +2182,15 @@ function App() {
         />
       ) : null}
 
-      {activeEditor?.kind === 'aquapark' ? (
-        <AquaparkReservationModal
-          reservation={activeAquaparkReservation}
-          savedSurnames={savedSurnames}
+      {activeEditor?.kind === 'aquaparkEntry' ? (
+        <AquaparkEntryModal onClose={closeEditor} onSave={saveAquaparkEntry} />
+      ) : null}
+
+      {activeEditor?.kind === 'sunbedSale' ? (
+        <SunbedSaleModal
+          sale={activeSunbedSale}
           onClose={closeEditor}
-          onSave={(details) => saveAquaparkReservation(activeEditor.id, details)}
+          onSave={(details) => saveSunbedSale(details, activeSunbedSale?.id)}
         />
       ) : null}
 
@@ -1938,8 +2484,10 @@ function ActiveReservationsSection({
             <article className="active-reservation-card" key={reservation.id}>
               <div className="active-reservation-card-header">
                 <strong>{reservation.surname}</strong>
-                <span className="active-days">{formatDaysLeft(reservation.reservedDays)}</span>
+                <span className="active-days">{formatDaysLeft(getInclusiveDateDays(reservation.startDate, reservation.endDate))}</span>
               </div>
+              <p className="active-reservation-date">{formatReservationDates(reservation.startDate, reservation.endDate)}</p>
+              {reservation.totalAmountPaid !== undefined ? <p className="active-reservation-paid">Paid: {formatEuro(reservation.totalAmountPaid)}</p> : null}
               {reservation.notes ? <p className="active-reservation-notes">{reservation.notes}</p> : null}
               <p className="active-reservation-meta">{reservation.assignmentLabel}</p>
               <div className="active-reservation-actions">
@@ -1981,19 +2529,26 @@ function BeachReservationModal({
   onSave: (details: BeachReservationDetails) => void;
 }) {
   const [surname, setSurname] = useState(reservation.surname);
-  const [reservedDays, setReservedDays] = useState(String(reservation.reservedDays));
+  const [startDate, setStartDate] = useState(reservation.startDate);
+  const [endDate, setEndDate] = useState(reservation.endDate);
+  const [totalAmountPaid, setTotalAmountPaid] = useState(
+    reservation.totalAmountPaid === undefined ? '' : String(reservation.totalAmountPaid),
+  );
   const [notes, setNotes] = useState(reservation.notes ?? '');
-  const normalizedDays = Number(reservedDays);
-  const canSave = normalizeSurname(surname).length > 0 && Number.isInteger(normalizedDays) && normalizedDays > 0;
+  const duration = getInclusiveDateDays(startDate, endDate);
+  const parsedAmount = parsePositiveMoney(totalAmountPaid);
+  const canSave = normalizeSurname(surname).length > 0 && duration > 0 && parsedAmount !== null;
 
   function save() {
-    if (!canSave) {
+    if (!canSave || parsedAmount === null) {
       return;
     }
 
     onSave({
       surname,
-      reservedDays: normalizedDays,
+      startDate,
+      endDate,
+      totalAmountPaid: parsedAmount,
       notes: notes.trim() || undefined,
     });
   }
@@ -2026,16 +2581,38 @@ function BeachReservationModal({
             onChange={setSurname}
           />
           <label>
-            Reserved days
+            Start date
             <input
-              type="number"
-              inputMode="numeric"
-              min="1"
-              step="1"
-              value={reservedDays}
-              onChange={(event) => setReservedDays(event.target.value)}
+              type="date"
+              value={startDate}
+              onChange={(event) => setStartDate(event.target.value)}
             />
           </label>
+          <label>
+            End date
+            <input
+              type="date"
+              min={startDate}
+              value={endDate}
+              onChange={(event) => setEndDate(event.target.value)}
+            />
+          </label>
+          <p className="reservation-duration">
+            {duration ? formatDaysLeft(duration) : 'End date must be on or after the start date'}
+          </p>
+          <label>
+            Total amount paid
+            <input
+              type="number"
+              inputMode="decimal"
+              min="0.01"
+              step="0.01"
+              value={totalAmountPaid}
+              onChange={(event) => setTotalAmountPaid(event.target.value)}
+              placeholder="e.g. 150"
+            />
+          </label>
+          {parsedAmount === null ? <p className="field-error">Enter a paid amount greater than EUR 0 with at most 2 decimal places.</p> : null}
           <label>
             Description / notes
             <textarea
@@ -2122,81 +2699,327 @@ function SavedSurnamesManager({
   );
 }
 
-function AquaparkPage({
-  reservations,
-  onCreateReservation,
-  onEditReservation,
-  onDeleteReservation,
+function SunbedsPage({
+  sales,
+  onCreateSale,
+  onEditSale,
+  onDeleteSale,
 }: {
-  reservations: AquaparkReservation[];
-  onCreateReservation: () => void;
-  onEditReservation: (reservationId: string) => void;
-  onDeleteReservation: (reservationId: string) => void;
+  sales: NonNumberedSunbedSale[];
+  onCreateSale: () => void;
+  onEditSale: (saleId: string) => void;
+  onDeleteSale: (saleId: string) => void;
 }) {
-  return (
-    <section className="aquapark-page" aria-labelledby="aquapark-heading">
-      <div className="aquapark-hero">
-        <div>
-          <p className="eyebrow">Multi-day reservations</p>
-          <h2 id="aquapark-heading">Aquapark</h2>
-        </div>
-        <button type="button" className="aquapark-primary-button" onClick={onCreateReservation}>
-          New Aquapark Reservation
-        </button>
-      </div>
+  const totalQuantity = sales.reduce((total, sale) => total + sale.quantity, 0);
+  const totalRevenue = sales.reduce((total, sale) => total + sale.totalAmount, 0);
 
-      {reservations.length ? (
-        <div className="aquapark-reservation-list">
-          {reservations.map((reservation) => (
-            <AquaparkReservationCard
-              key={reservation.id}
-              reservation={reservation}
-              onEdit={onEditReservation}
-              onDelete={onDeleteReservation}
-            />
-          ))}
+  return (
+    <section className="sunbeds-page" aria-labelledby="sunbeds-heading">
+      <header className="sunbeds-hero">
+        <p className="eyebrow">Today</p>
+        <h2 id="sunbeds-heading">Non-numbered Sunbeds</h2>
+        <div className="sunbeds-totals">
+          <span>Sunbeds sold<strong>{totalQuantity}</strong></span>
+          <span>Total<strong>{formatEuro(totalRevenue)}</strong></span>
         </div>
-      ) : (
-        <div className="empty-aquapark">
-          <strong>No active Aquapark reservations</strong>
-          <span>New reservations will stay saved on this phone/browser.</span>
+        <button type="button" className="sunbeds-primary-button" onClick={onCreateSale}>New Sunbed Sale</button>
+      </header>
+
+      <section className="sunbed-sales-list" aria-labelledby="sunbed-sales-heading">
+        <div className="sunbeds-section-heading">
+          <div>
+            <p className="eyebrow">Current-day sales</p>
+            <h3 id="sunbed-sales-heading">Today's Sales ({sales.length})</h3>
+          </div>
         </div>
-      )}
+        {sales.length ? sales.map((sale) => (
+          <article className="sunbed-sale-card" key={sale.id}>
+            <div>
+              <p className="eyebrow">{formatTime(sale.createdAt)}</p>
+              <strong>{sale.quantity} sunbeds</strong>
+            </div>
+            <strong>{formatEuro(sale.totalAmount)}</strong>
+            <div className="sunbed-sale-actions">
+              <button type="button" onClick={() => onEditSale(sale.id)}>Edit</button>
+              <button type="button" onClick={() => onDeleteSale(sale.id)}>Delete</button>
+            </div>
+          </article>
+        )) : <p className="report-empty">No Sunbed sales recorded today.</p>}
+      </section>
     </section>
   );
 }
 
-function AquaparkReservationCard({
-  reservation,
-  onEdit,
+function AquaparkPage({
+  entries,
+  currentTime,
+  onCreateEntry,
+  onDeleteEntry,
+}: {
+  entries: AquaparkEntry[];
+  currentTime: Date;
+  onCreateEntry: () => void;
+  onDeleteEntry: (entryId: string) => void;
+}) {
+  const activeEntries = entries.filter((entry) => entry.status === 'active');
+
+  return (
+    <section className="aquapark-page" aria-labelledby="aquapark-heading">
+      <div className="aquapark-hero">
+        <div>
+          <p className="eyebrow">Operational ticket and wristband tracker</p>
+          <h2 id="aquapark-heading">Aquapark</h2>
+        </div>
+        <div className="aquapark-hero-actions">
+          <button type="button" className="aquapark-primary-button" onClick={onCreateEntry}>
+            New Aquapark Entry
+          </button>
+        </div>
+      </div>
+
+      <section className="aquapark-tracker" aria-labelledby="aquapark-tracker-heading">
+        <div className="aquapark-section-heading">
+          <div>
+            <p className="eyebrow">Operational tracker</p>
+            <h3 id="aquapark-tracker-heading">Wristbands ({activeEntries.length})</h3>
+          </div>
+        </div>
+        {activeEntries.length ? (
+          <div className="aquapark-entry-list">
+            {activeEntries.map((entry) => (
+              <AquaparkEntryCard
+                key={entry.id}
+                entry={entry}
+                expired={isAquaparkEntryExpired(entry, currentTime)}
+                onDelete={onDeleteEntry}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="empty-aquapark">
+            <strong>No active wristband entries</strong>
+            <span>Use New Aquapark Entry to track timed tickets and wristband numbers.</span>
+          </div>
+        )}
+      </section>
+    </section>
+  );
+}
+
+function AquaparkEntryCard({
+  entry,
+  expired,
   onDelete,
 }: {
-  reservation: AquaparkReservation;
-  onEdit: (reservationId: string) => void;
-  onDelete: (reservationId: string) => void;
+  entry: AquaparkEntry;
+  expired: boolean;
+  onDelete: (entryId: string) => void;
 }) {
+  const isMultiDay = entry.ticketType === 'one_week' || entry.ticketType === 'custom_days';
+  const priceDetail = entry.isLegacyPrice
+    ? `Legacy total: ${formatEuro(entry.totalPrice)}`
+    : entry.ticketType === 'custom_days'
+      ? `${entry.wristbands.length} x ${entry.customDays ?? 1} days x ${formatEuro(entry.dailyUnitPrice ?? entry.unitPrice)}`
+      : `${entry.wristbands.length} x ${formatEuro(entry.unitPrice)}`;
+
   return (
-    <article className="aquapark-card">
-      <div className="aquapark-card-main">
+    <article className={`aquapark-entry-card${expired ? ' expired' : ''}`}>
+      <div className="aquapark-entry-card-main">
         <div>
-          <p className="eyebrow">Reservation</p>
-          <h3>{reservation.surname}</h3>
+          <p className="eyebrow">Wristbands</p>
+          <h4>{entry.wristbands.join(', ')}</h4>
         </div>
-        <span className="days-badge">{formatDays(reservation.reservedDays)}</span>
+        <span className="aquapark-price-badge">Total {formatEuro(entry.totalPrice)}</span>
       </div>
-      {reservation.notes ? <p className="aquapark-notes">{reservation.notes}</p> : null}
-      <p className="aquapark-date">
-        {reservation.updatedAt ? `Updated ${formatDate(reservation.updatedAt)}` : `Created ${formatDate(reservation.createdAt)}`}
-      </p>
-      <div className="aquapark-card-actions">
-        <button type="button" onClick={() => onEdit(reservation.id)}>
-          Edit
-        </button>
-        <button type="button" className="danger-link" onClick={() => onDelete(reservation.id)}>
-          Delete
-        </button>
-      </div>
+      <p className="aquapark-ticket-label">{AQUAPARK_TICKETS[entry.ticketType].label}</p>
+      <p className="aquapark-price-detail">{priceDetail}</p>
+      {isMultiDay ? (
+        <div className="aquapark-entry-times">
+          <span><strong>Start</strong>{formatDate(entry.startAt)}</span>
+          <span><strong>{entry.ticketType === 'custom_days' ? 'Custom Days' : 'Weekly'}</strong>{`Valid until: ${formatDate(entry.validUntil)}`}</span>
+        </div>
+      ) : (
+        <div className="aquapark-entry-times">
+          <span><strong>Start</strong>{formatTime(entry.startAt)}</span>
+          <span><strong>End</strong>{formatTime(entry.endAt ?? entry.startAt)}</span>
+        </div>
+      )}
+      {entry.description ? (
+        <div className="aquapark-entry-description">
+          <strong>Description</strong>
+          <p>{entry.description}</p>
+        </div>
+      ) : null}
+      {expired ? <p className="aquapark-expired-label">Expired</p> : null}
+      <button type="button" className="aquapark-entry-close" onClick={() => onDelete(entry.id)}>
+        Close Entry
+      </button>
     </article>
+  );
+}
+
+function getDailyReport(sales: DailySale[], reservations: BeachReservation[], today = getLocalDateKey()) {
+  const beachSales = sales.filter((sale): sale is Extract<DailySale, { kind: 'beach_set' }> => sale.kind === 'beach_set');
+  const bedSales = sales.filter((sale): sale is Extract<DailySale, { kind: 'bed' }> => sale.kind === 'bed');
+  const sunbedSales = sales.filter((sale): sale is Extract<DailySale, { kind: 'sunbed' }> => sale.kind === 'sunbed');
+  const aquaparkSales = sales.filter((sale): sale is Extract<DailySale, { kind: 'aquapark_entry' }> => sale.kind === 'aquapark_entry');
+  const beachTotal = beachSales.reduce((total, sale) => total + sale.amount, 0);
+  const bedTotal = bedSales.reduce((total, sale) => total + sale.amount, 0);
+  const sunbedTotal = sunbedSales.reduce((total, sale) => total + sale.amount, 0);
+  const reservationPayments = reservations.filter(
+    (reservation) =>
+      reservation.totalAmountPaid !== undefined &&
+      reservation.totalAmountPaid > 0 &&
+      reservation.paymentRecordedAt !== undefined &&
+      getLocalDateKey(new Date(reservation.paymentRecordedAt)) === today,
+  );
+  const reservationTotal = reservationPayments.reduce((total, reservation) => total + (reservation.totalAmountPaid ?? 0), 0);
+  const aquaparkTotal = aquaparkSales.reduce((total, sale) => total + sale.amount, 0);
+  const ticketBreakdown = (Object.keys(AQUAPARK_TICKETS) as AquaparkTicketType[]).map((ticketType) => {
+    const ticketSales = aquaparkSales.filter((sale) => sale.ticketType === ticketType);
+    return {
+      ticketType,
+      wristbandCount: ticketSales.reduce((total, sale) => total + sale.wristbandCount, 0),
+      customDayCount: ticketSales.reduce((total, sale) => total + (sale.customDays ?? 0) * sale.wristbandCount, 0),
+      total: ticketSales.reduce((total, sale) => total + sale.amount, 0),
+    };
+  });
+
+  return {
+    beachSales,
+    bedSales,
+    sunbedSales,
+    reservationPayments,
+    aquaparkSales,
+    beachTotal,
+    bedTotal,
+    sunbedTotal,
+    reservationTotal,
+    aquaparkTotal,
+    total: beachTotal + bedTotal + sunbedTotal + reservationTotal + aquaparkTotal,
+    sunbedQuantity: sunbedSales.reduce((total, sale) => total + sale.quantity, 0),
+    wristbandCount: aquaparkSales.reduce((total, sale) => total + sale.wristbandCount, 0),
+    ticketBreakdown,
+  };
+}
+
+function DailyReport({ sales, reservations }: { sales: DailySale[]; reservations: BeachReservation[] }) {
+  const report = useMemo(() => getDailyReport(sales, reservations), [sales, reservations]);
+  const today = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date());
+
+  return (
+    <section className="daily-report-page" aria-labelledby="daily-report-heading">
+      <header className="report-hero">
+        <p className="eyebrow">Sales recorded in Beach Set Manager</p>
+        <h2 id="daily-report-heading">Daily Report</h2>
+        <p>{today}</p>
+        <div className="report-total">
+          <span>Total</span>
+          <strong>{formatEuro(report.total)}</strong>
+        </div>
+        <div className="report-summary-grid">
+          <span>Beach Sets<strong>{formatEuro(report.beachTotal)}</strong><small>{report.beachSales.length} sales</small></span>
+          <span>Beds<strong>{formatEuro(report.bedTotal)}</strong><small>{report.bedSales.length} sales</small></span>
+          <span>Sunbeds<strong>{formatEuro(report.sunbedTotal)}</strong><small>{report.sunbedQuantity} sold</small></span>
+          <span>Reservations<strong>{formatEuro(report.reservationTotal)}</strong><small>{report.reservationPayments.length} payments</small></span>
+          <span>Aquapark<strong>{formatEuro(report.aquaparkTotal)}</strong><small>{report.wristbandCount} wristbands</small></span>
+        </div>
+      </header>
+
+      <section className="report-section" aria-labelledby="beach-report-heading">
+        <div className="report-section-heading">
+          <div>
+            <p className="eyebrow">Current-day priced sets</p>
+            <h3 id="beach-report-heading">Beach ({report.beachSales.length})</h3>
+          </div>
+          <strong>{formatEuro(report.beachTotal)}</strong>
+        </div>
+        {report.beachSales.length ? (
+          <div className="report-list">
+            {report.beachSales.map((sale) => (
+              <p key={sale.id}><span>Set {sale.setId}</span><strong>{formatEuro(sale.amount)}</strong></p>
+            ))}
+          </div>
+        ) : <p className="report-empty">No current-day numbered set sales recorded.</p>}
+      </section>
+
+      <section className="report-section" aria-labelledby="reservation-report-heading">
+        <div className="report-section-heading">
+          <div>
+            <p className="eyebrow">Payments recorded today</p>
+            <h3 id="reservation-report-heading">Beach Reservations ({report.reservationPayments.length})</h3>
+          </div>
+          <strong>{formatEuro(report.reservationTotal)}</strong>
+        </div>
+        {report.reservationPayments.length ? (
+          <div className="report-list">
+            {report.reservationPayments.map((reservation) => (
+              <p key={reservation.id}>
+                <span>{reservation.surname}<small>{formatReservationDates(reservation.startDate, reservation.endDate)}</small></span>
+                <strong>{formatEuro(reservation.totalAmountPaid ?? 0)}</strong>
+              </p>
+            ))}
+          </div>
+        ) : <p className="report-empty">No Beach reservation payments were recorded today.</p>}
+      </section>
+
+      <section className="report-section" aria-labelledby="bed-report-heading">
+        <div className="report-section-heading">
+          <div>
+            <p className="eyebrow">Current-day priced beds</p>
+            <h3 id="bed-report-heading">Beds ({report.bedSales.length})</h3>
+          </div>
+          <strong>{formatEuro(report.bedTotal)}</strong>
+        </div>
+        {report.bedSales.length ? (
+          <div className="report-list">
+            {report.bedSales.map((sale) => (
+              <p key={sale.id}><span>Bed {sale.bedId}</span><strong>{formatEuro(sale.amount)}</strong></p>
+            ))}
+          </div>
+        ) : <p className="report-empty">No current-day Bed sales recorded.</p>}
+      </section>
+
+      <section className="report-section" aria-labelledby="sunbed-report-heading">
+        <div className="report-section-heading">
+          <div>
+            <p className="eyebrow">Individual sunbed sales</p>
+            <h3 id="sunbed-report-heading">Sunbeds ({report.sunbedQuantity} sold)</h3>
+          </div>
+          <strong>{formatEuro(report.sunbedTotal)}</strong>
+        </div>
+        {report.sunbedSales.length ? (
+          <div className="report-list">
+            {report.sunbedSales.map((sale) => (
+              <p key={sale.id}><span>{sale.quantity} sunbeds</span><strong>{formatEuro(sale.amount)}</strong></p>
+            ))}
+          </div>
+        ) : <p className="report-empty">No current-day non-numbered Sunbed sales recorded.</p>}
+      </section>
+
+      <section className="report-section" aria-labelledby="aquapark-report-heading">
+        <div className="report-section-heading">
+          <div>
+            <p className="eyebrow">Tracker entries created today</p>
+            <h3 id="aquapark-report-heading">Aquapark ({report.wristbandCount} wristbands)</h3>
+          </div>
+          <strong>{formatEuro(report.aquaparkTotal)}</strong>
+        </div>
+        <div className="report-list">
+          {report.ticketBreakdown.map((ticket) => (
+            <p key={ticket.ticketType}>
+              <span>
+                {AQUAPARK_TICKETS[ticket.ticketType].label}
+                <small>
+                  {ticket.wristbandCount} wristbands{ticket.ticketType === 'custom_days' && ticket.customDayCount ? `, ${ticket.customDayCount} wristband-days` : ''}
+                </small>
+              </span>
+              <strong>{formatEuro(ticket.total)}</strong>
+            </p>
+          ))}
+        </div>
+      </section>
+    </section>
   );
 }
 
@@ -2211,6 +3034,7 @@ function BottomTabs({
     { id: 'beach1', label: 'Beach 1' },
     { id: 'beach2', label: 'Beach 2' },
     { id: 'beds', label: 'Beds' },
+    { id: 'sunbeds', label: 'Sunbeds' },
     { id: 'aquapark', label: 'Aquapark' },
   ];
 
@@ -2242,7 +3066,7 @@ function SetDetails({
     return (
       <span className="card-detail">
         <strong>Paid</strong>
-        <small>2 beds + parasol</small>
+        <small>{beachSet.price ? formatEuro(beachSet.price) : '2 beds + parasol'}</small>
       </span>
     );
   }
@@ -2254,7 +3078,7 @@ function SetDetails({
       <span className="card-detail">
         <strong>Reserved</strong>
         <small>{reservation?.surname || beachSet.surname || 'Missing reservation'}</small>
-        <small>{formatDays(reservation?.reservedDays ?? beachSet.reservedDays)}</small>
+        <small>{formatDays(reservation ? getInclusiveDateDays(reservation.startDate, reservation.endDate) : beachSet.reservedDays)}</small>
       </span>
     );
   }
@@ -2281,7 +3105,7 @@ function BedDetails({ bed, beachReservations }: { bed: ExtraBed; beachReservatio
     return (
       <span className="card-detail">
         <strong>Paid</strong>
-        <small>Bed only</small>
+        <small>{bed.price ? formatEuro(bed.price) : 'Bed only'}</small>
       </span>
     );
   }
@@ -2293,7 +3117,7 @@ function BedDetails({ bed, beachReservations }: { bed: ExtraBed; beachReservatio
       <span className="card-detail">
         <strong>Reserved</strong>
         <small>{reservation?.surname || bed.surname || 'Missing reservation'}</small>
-        <small>{formatDays(reservation?.reservedDays ?? bed.reservedDays)}</small>
+        <small>{formatDays(reservation ? getInclusiveDateDays(reservation.startDate, reservation.endDate) : bed.reservedDays)}</small>
       </span>
     );
   }
@@ -2342,16 +3166,21 @@ function BeachReservationAssignmentPanel({
   onAssignReservation: (reservation: BeachReservation) => void;
   onCreateReservation: (details: BeachReservationDetails) => void;
 }) {
+  const assignableReservations = beachReservations.filter((reservation) => reservation.endDate >= getLocalDateKey());
   const [assignmentMode, setAssignmentMode] = useState<'existing' | 'new'>(
-    beachReservations.length ? 'existing' : 'new',
+    assignableReservations.length ? 'existing' : 'new',
   );
   const [selectedReservationId, setSelectedReservationId] = useState(
-    currentBeachReservationId ?? beachReservations[0]?.id ?? '',
+    currentBeachReservationId ?? assignableReservations[0]?.id ?? '',
   );
   const [surname, setSurname] = useState('');
-  const [reservedDays, setReservedDays] = useState('1');
+  const [startDate, setStartDate] = useState(getLocalDateKey());
+  const [endDate, setEndDate] = useState(getLocalDateKey());
+  const [totalAmountPaid, setTotalAmountPaid] = useState('');
   const [notes, setNotes] = useState('');
-  const canCreateReservation = normalizeSurname(surname).length > 0;
+  const duration = getInclusiveDateDays(startDate, endDate);
+  const parsedAmount = parsePositiveMoney(totalAmountPaid);
+  const canCreateReservation = normalizeSurname(surname).length > 0 && duration > 0 && parsedAmount !== null;
 
   function getAssignmentLabel(reservationId: string) {
     return (
@@ -2361,7 +3190,7 @@ function BeachReservationAssignmentPanel({
   }
 
   function assignExistingReservation() {
-    const reservation = beachReservations.find((candidate) => candidate.id === selectedReservationId);
+    const reservation = assignableReservations.find((candidate) => candidate.id === selectedReservationId);
 
     if (reservation) {
       onAssignReservation(reservation);
@@ -2369,13 +3198,15 @@ function BeachReservationAssignmentPanel({
   }
 
   function createNewReservation() {
-    if (!canCreateReservation) {
+    if (!canCreateReservation || parsedAmount === null) {
       return;
     }
 
     onCreateReservation({
       surname,
-      reservedDays: Math.max(1, Number(reservedDays) || 1),
+      startDate,
+      endDate,
+      totalAmountPaid: parsedAmount,
       notes: notes.trim() || undefined,
     });
   }
@@ -2391,23 +3222,23 @@ function BeachReservationAssignmentPanel({
           type="button"
           className={assignmentMode === 'existing' ? 'quick-option selected reserved-choice' : 'quick-option'}
           onClick={() => setAssignmentMode('existing')}
-          disabled={!beachReservations.length}
+          disabled={!assignableReservations.length}
         >
-          Choose existing beach reservation
+          Choose Reservation
         </button>
         <button
           type="button"
           className={assignmentMode === 'new' ? 'quick-option selected reserved-choice' : 'quick-option'}
           onClick={() => setAssignmentMode('new')}
         >
-          Create new beach reservation
+          New Reservation
         </button>
       </div>
 
-      {assignmentMode === 'existing' && beachReservations.length ? (
+      {assignmentMode === 'existing' && assignableReservations.length ? (
         <>
           <div className="existing-reservation-list" aria-label="Active beach reservations">
-            {beachReservations.map((reservation) => {
+            {assignableReservations.map((reservation) => {
               const isSelected = reservation.id === selectedReservationId;
 
               return (
@@ -2420,7 +3251,11 @@ function BeachReservationAssignmentPanel({
                 >
                   <span className="existing-reservation-option-header">
                     <strong>{reservation.surname}</strong>
-                    <span>{formatDaysLeft(reservation.reservedDays)}</span>
+                    <span>{formatDaysLeft(getInclusiveDateDays(reservation.startDate, reservation.endDate))}</span>
+                  </span>
+                  <span className="existing-reservation-option-dates">
+                    {formatReservationDates(reservation.startDate, reservation.endDate)}
+                    {reservation.totalAmountPaid !== undefined ? ` - Paid ${formatEuro(reservation.totalAmountPaid)}` : ''}
                   </span>
                   {reservation.notes ? <span className="existing-reservation-option-notes">{reservation.notes}</span> : null}
                   <span className="existing-reservation-option-assignment">
@@ -2450,15 +3285,29 @@ function BeachReservationAssignmentPanel({
             onChange={setSurname}
           />
           <label>
-            Reserved days
+            Start date
+            <input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
+          </label>
+          <label>
+            End date
+            <input type="date" min={startDate} value={endDate} onChange={(event) => setEndDate(event.target.value)} />
+          </label>
+          <p className="reservation-duration">
+            {duration ? formatDaysLeft(duration) : 'End date must be on or after the start date'}
+          </p>
+          <label>
+            Total amount paid
             <input
               type="number"
-              inputMode="numeric"
-              min="1"
-              value={reservedDays}
-              onChange={(event) => setReservedDays(event.target.value)}
+              inputMode="decimal"
+              min="0.01"
+              step="0.01"
+              value={totalAmountPaid}
+              onChange={(event) => setTotalAmountPaid(event.target.value)}
+              placeholder="e.g. 150"
             />
           </label>
+          {parsedAmount === null ? <p className="field-error">Enter a paid amount greater than EUR 0 with at most 2 decimal places.</p> : null}
           <label>
             Notes
             <textarea
@@ -2503,6 +3352,11 @@ function SetEditorModal({
 }) {
   const [mode, setMode] = useState<DetailMode>('actions');
   const [partialNote, setPartialNote] = useState(set.partialNote ?? PARTIAL_OPTIONS[0]);
+  const [fixedTotal, setFixedTotal] = useState(set.priceMode === 'fixed' ? set.price ?? 0 : 0);
+  const [priceMode, setPriceMode] = useState<SetPriceMode>(set.priceMode ?? 'fixed');
+  const [specialPrice, setSpecialPrice] = useState(set.priceMode === 'special' && set.price ? String(set.price) : '');
+  const parsedSpecialPrice = parsePositiveMoney(specialPrice);
+  const finalPrice = priceMode === 'special' ? parsedSpecialPrice : fixedTotal > 0 ? fixedTotal : null;
 
   function saveAndClose(status: SetStatus, details?: Partial<BeachSet>) {
     onSave(status, details);
@@ -2513,6 +3367,14 @@ function SetEditorModal({
     saveAndClose('partial', {
       partialNote: partialNote.trim() || 'Partial payment',
     });
+  }
+
+  function savePaid() {
+    if (!finalPrice) {
+      return;
+    }
+
+    saveAndClose('paid', { price: finalPrice, priceMode });
   }
 
   return (
@@ -2544,14 +3406,75 @@ function SetEditorModal({
           <button type="button" className="sheet-button free-action" onClick={() => saveAndClose('free')}>
             Mark Free
           </button>
-          <button type="button" className="sheet-button paid-action" onClick={() => saveAndClose('paid')}>
-            Mark Paid Full Set
+          <button type="button" className="sheet-button paid-action" onClick={savePaid} disabled={!finalPrice}>
+            {finalPrice ? `Save Paid Set (${formatEuro(finalPrice)})` : 'Choose a Price First'}
           </button>
           <button type="button" className="sheet-button reserved-action" onClick={() => setMode('reserved')}>
             Mark Reserved
           </button>
           <button type="button" className="sheet-button partial-action" onClick={() => setMode('partial')}>
             Mark Partial Payment
+          </button>
+        </div>
+
+        <div className="detail-panel set-price-builder" aria-label="Set price builder">
+          <div>
+            <p className="eyebrow">Price</p>
+            <strong className="price-total">Current total: {finalPrice ? formatEuro(finalPrice) : 'Choose a price'}</strong>
+          </div>
+          <div className="price-button-row">
+            <button
+              type="button"
+              className="quick-option"
+              onClick={() => {
+                setPriceMode('fixed');
+                setFixedTotal((currentTotal) => currentTotal + 4);
+              }}
+            >
+              €4
+            </button>
+            <button
+              type="button"
+              className="quick-option"
+              onClick={() => {
+                setPriceMode('fixed');
+                setFixedTotal((currentTotal) => currentTotal + 12);
+              }}
+            >
+              €12
+            </button>
+            <button
+              type="button"
+              className={priceMode === 'special' ? 'quick-option selected' : 'quick-option'}
+              onClick={() => setPriceMode('special')}
+            >
+              Special Price
+            </button>
+          </div>
+          {priceMode === 'special' ? (
+            <label>
+              Special price in euros
+              <input
+                type="number"
+                inputMode="decimal"
+                min="0.01"
+                step="0.01"
+                value={specialPrice}
+                onChange={(event) => setSpecialPrice(event.target.value)}
+                placeholder="e.g. 10 or 17.50"
+              />
+            </label>
+          ) : null}
+          <button
+            type="button"
+            className="clear-price-button"
+            onClick={() => {
+              setFixedTotal(0);
+              setPriceMode('fixed');
+              setSpecialPrice('');
+            }}
+          >
+            Clear Price
           </button>
         </div>
 
@@ -2625,6 +3548,11 @@ function BedEditorModal({
   onCreateReservation: (details: BeachReservationDetails) => void;
 }) {
   const [mode, setMode] = useState<'actions' | 'reserved'>('actions');
+  const [fixedTotal, setFixedTotal] = useState(bed.priceMode === 'fixed' ? bed.price ?? 0 : 0);
+  const [priceMode, setPriceMode] = useState<SetPriceMode>(bed.priceMode ?? 'fixed');
+  const [specialPrice, setSpecialPrice] = useState(bed.priceMode === 'special' && bed.price ? String(bed.price) : '');
+  const parsedSpecialPrice = parsePositiveMoney(specialPrice);
+  const finalPrice = priceMode === 'special' ? parsedSpecialPrice : fixedTotal > 0 ? fixedTotal : null;
 
   function saveAndClose(status: BedStatus, details?: Partial<ExtraBed>) {
     onSave(status, details);
@@ -2660,12 +3588,31 @@ function BedEditorModal({
           <button type="button" className="sheet-button free-action" onClick={() => saveAndClose('free')}>
             Mark Free
           </button>
-          <button type="button" className="sheet-button paid-action" onClick={() => saveAndClose('paid')}>
-            Mark Paid Bed
+          <button type="button" className="sheet-button paid-action" onClick={() => finalPrice && saveAndClose('paid', { price: finalPrice, priceMode })} disabled={!finalPrice}>
+            {finalPrice ? `Save Paid Bed (${formatEuro(finalPrice)})` : 'Choose a Price First'}
           </button>
           <button type="button" className="sheet-button reserved-action" onClick={() => setMode('reserved')}>
             Mark Reserved
           </button>
+        </div>
+
+        <div className="detail-panel set-price-builder" aria-label="Bed price builder">
+          <div>
+            <p className="eyebrow">Price</p>
+            <strong className="price-total">Current total: {finalPrice ? formatEuro(finalPrice) : 'Choose a price'}</strong>
+          </div>
+          <div className="price-button-row">
+            <button type="button" className="quick-option" onClick={() => { setPriceMode('fixed'); setFixedTotal((total) => total + 20); }}>EUR 20</button>
+            <button type="button" className="quick-option" onClick={() => { setPriceMode('fixed'); setFixedTotal((total) => total + 40); }}>EUR 40</button>
+            <button type="button" className={priceMode === 'special' ? 'quick-option selected' : 'quick-option'} onClick={() => setPriceMode('special')}>Special Price</button>
+          </div>
+          {priceMode === 'special' ? (
+            <label>
+              Special price in euros
+              <input type="number" inputMode="decimal" min="0.01" step="0.01" value={specialPrice} onChange={(event) => setSpecialPrice(event.target.value)} placeholder="e.g. 50" />
+            </label>
+          ) : null}
+          <button type="button" className="clear-price-button" onClick={() => { setFixedTotal(0); setPriceMode('fixed'); setSpecialPrice(''); }}>Clear Price</button>
         </div>
 
         {mode === 'reserved' ? (
@@ -2689,31 +3636,96 @@ function BedEditorModal({
   );
 }
 
-function AquaparkReservationModal({
-  reservation,
-  savedSurnames,
+function SunbedSaleModal({
+  sale,
   onClose,
   onSave,
 }: {
-  reservation: AquaparkReservation | null;
-  savedSurnames: ReservationSurname[];
+  sale: NonNumberedSunbedSale | null;
   onClose: () => void;
-  onSave: (details: { surname: string; reservedDays: number; notes?: string }) => void;
+  onSave: (details: { quantity: number; totalAmount: number }) => void;
 }) {
-  const [surname, setSurname] = useState(reservation?.surname ?? '');
-  const [reservedDays, setReservedDays] = useState(String(reservation?.reservedDays ?? 1));
-  const [notes, setNotes] = useState(reservation?.notes ?? '');
-  const canSave = normalizeSurname(surname).length > 0;
+  const [quantity, setQuantity] = useState(String(sale?.quantity ?? 1));
+  const [totalAmount, setTotalAmount] = useState(sale ? String(sale.totalAmount) : '');
+  const parsedQuantity = Number(quantity);
+  const parsedAmount = parsePositiveMoney(totalAmount);
+  const canSave = Number.isInteger(parsedQuantity) && parsedQuantity > 0 && parsedAmount !== null;
 
-  function saveReservation() {
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <section className="action-sheet" role="dialog" aria-modal="true" aria-labelledby="sunbed-sale-title" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="sheet-handle" aria-hidden="true" />
+        <header className="sheet-header">
+          <div>
+            <p className="eyebrow">Non-numbered Sunbeds</p>
+            <h2 id="sunbed-sale-title">{sale ? 'Edit Sunbed Sale' : 'New Sunbed Sale'}</h2>
+          </div>
+          <button type="button" className="close-button" onClick={onClose}>Close</button>
+        </header>
+        <div className="detail-panel">
+          <label>
+            Quantity sold
+            <input type="number" inputMode="numeric" min="1" step="1" value={quantity} onChange={(event) => setQuantity(event.target.value)} />
+          </label>
+          <label>
+            Total amount paid
+            <input type="number" inputMode="decimal" min="0.01" step="0.01" value={totalAmount} onChange={(event) => setTotalAmount(event.target.value)} placeholder="e.g. 32" />
+          </label>
+          <button type="button" className="sheet-button sunbeds-primary-button" disabled={!canSave} onClick={() => {
+            if (canSave && parsedAmount !== null) onSave({ quantity: parsedQuantity, totalAmount: parsedAmount });
+          }}>
+            Save Sunbed Sale
+          </button>
+        </div>
+        <button type="button" className="cancel-button" onClick={onClose}>Cancel</button>
+      </section>
+    </div>
+  );
+}
+
+function AquaparkEntryModal({
+  onClose,
+  onSave,
+}: {
+  onClose: () => void;
+  onSave: (details: AquaparkEntryDetails) => void;
+}) {
+  const [wristbandInput, setWristbandInput] = useState('');
+  const [ticketType, setTicketType] = useState<AquaparkTicketType>('30min');
+  const [useSpecialPrice, setUseSpecialPrice] = useState(false);
+  const [specialPrice, setSpecialPrice] = useState('');
+  const [customDays, setCustomDays] = useState('1');
+  const [customDailyPrice, setCustomDailyPrice] = useState('15');
+  const [description, setDescription] = useState('');
+  const parsedWristbands = parseWristbandNumbers(wristbandInput);
+  const parsedSpecialPrice = parsePositiveMoney(specialPrice);
+  const ticket = AQUAPARK_TICKETS[ticketType];
+  const quantity = parsedWristbands.wristbands.length;
+  const parsedCustomDays = Number(customDays);
+  const parsedCustomDailyPrice = parsePositiveMoney(customDailyPrice);
+  const isCustomDays = ticketType === 'custom_days';
+  const unitPrice = isCustomDays
+    ? parsedCustomDailyPrice ?? ticket.price
+    : useSpecialPrice && parsedSpecialPrice ? parsedSpecialPrice : ticket.price;
+  const dayMultiplier = isCustomDays && Number.isInteger(parsedCustomDays) && parsedCustomDays > 0 ? parsedCustomDays : 1;
+  const totalPrice = Math.round(quantity * dayMultiplier * unitPrice * 100) / 100;
+  const canSave = parsedWristbands.wristbands.length > 0 &&
+    (isCustomDays
+      ? Number.isInteger(parsedCustomDays) && parsedCustomDays > 0 && parsedCustomDailyPrice !== null
+      : !useSpecialPrice || parsedSpecialPrice !== null);
+
+  function saveEntry() {
     if (!canSave) {
       return;
     }
 
     onSave({
-      surname,
-      reservedDays: Math.max(1, Number(reservedDays) || 1),
-      notes: notes.trim() || undefined,
+      wristbands: parsedWristbands.wristbands,
+      ticketType,
+      specialPrice: useSpecialPrice ? parsedSpecialPrice ?? undefined : undefined,
+      customDays: isCustomDays ? parsedCustomDays : undefined,
+      dailyUnitPrice: isCustomDays ? parsedCustomDailyPrice ?? undefined : undefined,
+      description: description.trim() || undefined,
     });
   }
 
@@ -2723,55 +3735,107 @@ function AquaparkReservationModal({
         className="action-sheet"
         role="dialog"
         aria-modal="true"
-        aria-labelledby="aquapark-editor-title"
+        aria-labelledby="aquapark-entry-title"
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="sheet-handle" aria-hidden="true" />
         <header className="sheet-header">
           <div>
-            <p className="eyebrow">Aquapark</p>
-            <h2 id="aquapark-editor-title">
-              {reservation ? 'Edit Reservation' : 'New Aquapark Reservation'}
-            </h2>
+            <p className="eyebrow">Aquapark wristband tracker</p>
+            <h2 id="aquapark-entry-title">New Aquapark Entry</h2>
           </div>
-          <button type="button" className="close-button" aria-label="Close Aquapark editor" onClick={onClose}>
+          <button type="button" className="close-button" aria-label="Close Aquapark entry form" onClick={onClose}>
             Close
           </button>
         </header>
 
-        <div className="detail-panel aquapark-editor-panel">
-          <SurnameInput
-            inputId="aquapark-reservation-surname"
-            value={surname}
-            savedSurnames={savedSurnames}
-            onChange={setSurname}
-          />
+        <div className="detail-panel aquapark-entry-panel">
           <label>
-            Reserved days
+            Wristband numbers
             <input
-              type="number"
+              type="text"
               inputMode="numeric"
-              min="1"
-              value={reservedDays}
-              onChange={(event) => setReservedDays(event.target.value)}
+              value={wristbandInput}
+              onChange={(event) => setWristbandInput(event.target.value)}
+              placeholder="e.g. 34, 4, 5"
+              aria-describedby="wristband-help"
             />
+            <small id="wristband-help">Separate multiple wristbands with commas.</small>
           </label>
+          {wristbandInput && parsedWristbands.error ? <p className="field-error">{parsedWristbands.error}</p> : null}
+
           <label>
-            Notes
+            Ticket type
+            <select value={ticketType} onChange={(event) => setTicketType(event.target.value as AquaparkTicketType)}>
+              {(Object.keys(AQUAPARK_TICKETS) as AquaparkTicketType[]).map((type) => (
+                <option key={type} value={type}>
+                  {AQUAPARK_TICKETS[type].label} - {formatEuro(AQUAPARK_TICKETS[type].price)}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <div className="aquapark-price-summary">
+            <span>{isCustomDays ? 'Default daily price' : 'Default unit price'}</span>
+            <strong>{formatEuro(ticket.price)}{isCustomDays ? '/day' : ''}</strong>
+          </div>
+          {isCustomDays ? (
+            <>
+              <label>
+                Number of days
+                <input type="number" inputMode="numeric" min="1" step="1" value={customDays} onChange={(event) => setCustomDays(event.target.value)} />
+              </label>
+              <label>
+                Daily unit price in euros
+                <input type="number" inputMode="decimal" min="0.01" step="0.01" value={customDailyPrice} onChange={(event) => setCustomDailyPrice(event.target.value)} />
+              </label>
+            </>
+          ) : null}
+          {!isCustomDays ? (
+            <>
+              <label className="special-price-toggle">
+                <input
+                  type="checkbox"
+                  checked={useSpecialPrice}
+                  onChange={(event) => setUseSpecialPrice(event.target.checked)}
+                />
+                Use Special Price
+              </label>
+              {useSpecialPrice ? (
+                <label>
+                  Special price in euros
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min="0.01"
+                    step="0.01"
+                    value={specialPrice}
+                    onChange={(event) => setSpecialPrice(event.target.value)}
+                    placeholder="e.g. 10 or 17.50"
+                  />
+                </label>
+              ) : null}
+            </>
+          ) : null}
+          <p className="entry-final-price">
+            {quantity
+              ? isCustomDays
+                ? `${quantity} wristband${quantity === 1 ? '' : 's'} x ${dayMultiplier} days x ${formatEuro(unitPrice)}`
+                : `${quantity} wristband${quantity === 1 ? '' : 's'} x ${formatEuro(unitPrice)}`
+              : 'Add wristbands to calculate the total'}
+            <strong>Total {formatEuro(totalPrice)}</strong>
+          </p>
+          <label>
+            Description
             <textarea
-              value={notes}
-              onChange={(event) => setNotes(event.target.value)}
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
               rows={3}
-              placeholder="Optional"
+              placeholder="Optional description / notes"
             />
           </label>
-          <button
-            type="button"
-            className="sheet-button aquapark-save-action"
-            onClick={saveReservation}
-            disabled={!canSave}
-          >
-            Save Aquapark Reservation
+          <button type="button" className="sheet-button aquapark-save-action" onClick={saveEntry} disabled={!canSave}>
+            Create Aquapark Entry
           </button>
         </div>
 

@@ -57,6 +57,23 @@ h2 {
   box-shadow: 0 8px 18px rgba(183, 51, 75, 0.22);
 }
 
+.topbar-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.report-button {
+  min-height: 44px;
+  padding: 0 12px;
+  color: #124855;
+  font-weight: 900;
+  border: 1px solid rgba(18, 132, 150, 0.34);
+  border-radius: 8px;
+  background: #e5f8fb;
+}
+
 .reset-button:active,
 .set-card:active,
 .bed-card:active {
@@ -550,6 +567,7 @@ h2 {
 .set-card:focus-visible,
 .bed-card:focus-visible,
 .reset-button:focus-visible,
+.report-button:focus-visible,
 .tool-button:focus-visible,
 .danger-link:focus-visible,
 .close-button:focus-visible,
@@ -557,10 +575,10 @@ h2 {
 .cancel-button:focus-visible,
 .quick-option:focus-visible,
 .aquapark-primary-button:focus-visible,
-.aquapark-card-actions button:focus-visible,
 .active-reservation-edit:focus-visible,
 .active-reservation-delete:focus-visible,
 .surname-chip button:focus-visible,
+.aquapark-entry-close:focus-visible,
 .bottom-tab:focus-visible {
   outline: 3px solid #173c73;
   outline-offset: 2px;
@@ -776,6 +794,11 @@ h2 {
   display: grid;
   gap: 14px;
   margin-top: 18px;
+  padding: 8px;
+  border-radius: 10px;
+  background:
+    linear-gradient(135deg, rgba(223, 247, 251, 0.94), rgba(237, 250, 255, 0.94)),
+    #dff7fb;
 }
 
 .aquapark-hero {
@@ -801,12 +824,161 @@ h2 {
   box-shadow: 0 8px 18px rgba(8, 126, 115, 0.2);
 }
 
-.aquapark-reservation-list {
+.aquapark-hero-actions {
+  display: grid;
+}
+
+.aquapark-tracker {
   display: grid;
   gap: 10px;
 }
 
-.aquapark-card,
+.aquapark-section-heading h3 {
+  margin: 0;
+  color: #17202a;
+  font-size: 1.06rem;
+}
+
+.aquapark-entry-list {
+  display: grid;
+  gap: 10px;
+}
+
+.aquapark-entry-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid rgba(18, 132, 150, 0.24);
+  border-radius: 8px;
+  background: #f7feff;
+  box-shadow: 0 8px 22px rgba(42, 56, 67, 0.08);
+}
+
+.aquapark-entry-card.expired {
+  border: 2px solid #9f2039;
+  background: linear-gradient(135deg, #ffd2da, #fff0f2);
+  box-shadow: 0 0 0 2px rgba(159, 32, 57, 0.16), 0 10px 22px rgba(159, 32, 57, 0.16);
+}
+
+.aquapark-entry-card-main {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.aquapark-entry-card h4 {
+  margin: 0;
+  color: #17202a;
+  font-size: 1.15rem;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.aquapark-price-badge {
+  flex: 0 0 auto;
+  min-height: 38px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0 11px;
+  color: #087e73;
+  font-size: 0.88rem;
+  font-weight: 900;
+  border: 1px solid rgba(8, 126, 115, 0.25);
+  border-radius: 999px;
+  background: #dff7f1;
+}
+
+.aquapark-entry-card.expired .aquapark-price-badge {
+  color: #b7334b;
+  border-color: rgba(183, 51, 75, 0.28);
+  background: #fff7f8;
+}
+
+.aquapark-ticket-label,
+.aquapark-expired-label,
+.entry-final-price {
+  margin: 0;
+  font-weight: 900;
+}
+
+.aquapark-ticket-label {
+  color: #087e73;
+}
+
+.aquapark-price-detail {
+  margin: -5px 0 0;
+  color: #124855;
+  font-size: 0.86rem;
+  font-weight: 900;
+}
+
+.aquapark-entry-times {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.aquapark-entry-times span {
+  display: grid;
+  gap: 2px;
+  padding: 8px;
+  color: #53636f;
+  font-size: 0.82rem;
+  font-weight: 800;
+  border-radius: 7px;
+  background: rgba(223, 247, 241, 0.66);
+}
+
+.aquapark-entry-times strong {
+  color: #124855;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+
+.aquapark-expired-label {
+  padding: 8px 10px;
+  color: #ffffff;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border-radius: 7px;
+  background: #9f2039;
+}
+
+.aquapark-entry-close {
+  min-height: 44px;
+  color: #b7334b;
+  font-weight: 900;
+  border: 1px solid rgba(183, 51, 75, 0.28);
+  border-radius: 8px;
+  background: #fff7f8;
+}
+
+.aquapark-entry-description {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  color: #124855;
+  border-left: 3px solid rgba(8, 126, 115, 0.6);
+  border-radius: 6px;
+  background: rgba(223, 247, 241, 0.66);
+}
+
+.aquapark-entry-description strong {
+  font-size: 0.76rem;
+  text-transform: uppercase;
+}
+
+.aquapark-entry-description p {
+  margin: 0;
+  color: #17202a;
+  font-size: 0.92rem;
+  font-weight: 700;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
 .empty-aquapark {
   display: grid;
   gap: 10px;
@@ -817,35 +989,6 @@ h2 {
   box-shadow: 0 8px 22px rgba(42, 56, 67, 0.08);
 }
 
-.aquapark-card-main {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.aquapark-card h3 {
-  margin: 0;
-  color: #17202a;
-  font-size: 1.18rem;
-}
-
-.days-badge {
-  flex: 0 0 auto;
-  min-height: 42px;
-  display: inline-grid;
-  place-items: center;
-  padding: 0 12px;
-  color: #124855;
-  font-size: 0.86rem;
-  font-weight: 900;
-  border: 1px solid rgba(18, 72, 85, 0.18);
-  border-radius: 999px;
-  background: #dff7f1;
-}
-
-.aquapark-notes,
-.aquapark-date,
 .empty-aquapark span {
   margin: 0;
   color: #53636f;
@@ -859,23 +1002,154 @@ h2 {
   font-size: 1rem;
 }
 
-.aquapark-card-actions {
+.daily-report-page {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.report-hero {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid rgba(18, 132, 150, 0.26);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.88), rgba(224, 247, 250, 0.94)),
+    linear-gradient(180deg, rgba(76, 176, 195, 0.3), rgba(255, 249, 234, 0.55));
+  box-shadow: 0 12px 30px rgba(42, 56, 67, 0.08);
+}
+
+.report-hero > p:not(.eyebrow) {
+  margin: -4px 0 2px;
+  color: #53636f;
+  font-weight: 800;
+}
+
+.report-total {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+  color: #ffffff;
+  border-radius: 8px;
+  background: #087e73;
+  box-shadow: 0 8px 18px rgba(8, 126, 115, 0.2);
+}
+
+.report-total span {
+  font-size: 0.8rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.report-total strong {
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.report-summary-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
-.aquapark-card-actions button {
-  min-height: 44px;
-  color: #17202a;
+.report-summary-grid > span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 11px;
+  color: #53636f;
+  font-size: 0.76rem;
   font-weight: 900;
-  border: 1px solid rgba(23, 32, 42, 0.14);
+  border: 1px solid rgba(18, 132, 150, 0.18);
   border-radius: 8px;
-  background: #eef9fb;
+  background: rgba(255, 255, 255, 0.76);
 }
 
-.aquapark-card-actions .danger-link {
-  justify-self: stretch;
+.report-summary-grid strong {
+  color: #17202a;
+  font-size: 1.2rem;
+}
+
+.report-summary-grid small {
+  color: #53636f;
+  font-size: 0.74rem;
+}
+
+.report-section {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid rgba(23, 32, 42, 0.12);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 8px 22px rgba(42, 56, 67, 0.06);
+}
+
+.report-section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.report-section-heading h3 {
+  margin: 0;
+  color: #17202a;
+  font-size: 1.1rem;
+}
+
+.report-section-heading > strong {
+  flex: 0 0 auto;
+  color: #087e73;
+  font-size: 1.08rem;
+}
+
+.report-list {
+  display: grid;
+  gap: 0;
+  border-top: 1px solid rgba(23, 32, 42, 0.1);
+}
+
+.report-list p {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  margin: 0;
+  padding: 10px 0;
+  color: #53636f;
+  font-weight: 800;
+  border-bottom: 1px solid rgba(23, 32, 42, 0.08);
+}
+
+.report-list p > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.report-list p small {
+  color: #7b8993;
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.report-list p strong {
+  flex: 0 0 auto;
+  color: #17202a;
+}
+
+.report-empty {
+  margin: 0;
+  color: #65737e;
+  font-size: 0.9rem;
+  font-weight: 800;
+  line-height: 1.4;
 }
 
 .modal-backdrop {
@@ -1019,6 +1293,77 @@ h2 {
   background: #ffffff;
 }
 
+.set-price-builder {
+  gap: 10px;
+}
+
+.price-total {
+  display: block;
+  color: #006d4f;
+  font-size: 1rem;
+}
+
+.price-button-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.clear-price-button {
+  min-height: 42px;
+  color: #53636f;
+  font-weight: 900;
+  border: 1px solid rgba(23, 32, 42, 0.16);
+  border-radius: 8px;
+  background: #eef4f6;
+}
+
+.field-error {
+  margin: -3px 0 0;
+  color: #b7334b;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.detail-panel label small {
+  color: #53636f;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: none;
+}
+
+.aquapark-price-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 44px;
+  padding: 0 11px;
+  color: #124855;
+  font-size: 0.86rem;
+  font-weight: 800;
+  border-radius: 8px;
+  background: #dff7f1;
+}
+
+.aquapark-price-summary strong,
+.entry-final-price strong {
+  color: #087e73;
+  font-size: 1rem;
+}
+
+.special-price-toggle {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  justify-content: start;
+  text-transform: none !important;
+}
+
+.special-price-toggle input {
+  width: 20px !important;
+  min-height: 20px !important;
+  padding: 0 !important;
+}
+
 .detail-panel select {
   appearance: none;
   background:
@@ -1037,22 +1382,28 @@ h2 {
 
 .existing-reservation-list {
   display: grid;
-  max-height: 320px;
+  min-height: 0;
+  max-height: min(42vh, 340px);
   gap: 8px;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding-right: 2px;
 }
 
 .existing-reservation-option {
   display: grid;
+  align-content: start;
   gap: 5px;
-  min-height: 0;
+  min-height: 84px;
+  height: auto;
   padding: 11px;
   color: #17202a;
   text-align: left;
   border: 1px solid rgba(31, 95, 173, 0.24);
   border-radius: 8px;
   background: #ffffff;
+  overflow: visible;
+  white-space: normal;
 }
 
 .existing-reservation-option.selected {
@@ -1063,13 +1414,16 @@ h2 {
 
 .existing-reservation-option-header {
   display: flex;
-  align-items: baseline;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
 }
 
 .existing-reservation-option-header strong {
+  min-width: 0;
   font-size: 0.92rem;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
 }
 
 .existing-reservation-option-header span,
@@ -1077,6 +1431,14 @@ h2 {
   color: #1f5fad;
   font-size: 0.76rem;
   font-weight: 900;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.existing-reservation-option-header span {
+  flex: 0 0 auto;
+  text-align: right;
+  white-space: nowrap;
 }
 
 .existing-reservation-option-notes {
@@ -1098,6 +1460,13 @@ h2 {
 
 .reservation-mode-options {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.reservation-assignment-panel > .sheet-button.reserved-action {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  box-shadow: 0 -8px 14px rgba(251, 253, 255, 0.9);
 }
 
 .quick-option.reserved-choice.selected {
@@ -1133,7 +1502,7 @@ h2 {
   left: 0;
   z-index: 20;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 6px;
   padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
   border-top: 1px solid rgba(23, 32, 42, 0.12);
@@ -1145,7 +1514,7 @@ h2 {
   min-height: 48px;
   padding: 0 6px;
   color: #53636f;
-  font-size: 0.78rem;
+  font-size: 0.68rem;
   font-weight: 900;
   border: 1px solid rgba(23, 32, 42, 0.12);
   border-radius: 8px;
@@ -1165,6 +1534,116 @@ h2 {
     linear-gradient(180deg, rgba(112, 221, 225, 0.32), transparent),
     linear-gradient(135deg, #058399, #0bb7aa);
   box-shadow: 0 8px 18px rgba(5, 131, 153, 0.24);
+}
+
+.sunbeds-page {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.sunbeds-hero {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid rgba(166, 112, 21, 0.24);
+  border-radius: 8px;
+  background: linear-gradient(135deg, #fffdf4, #fff2c8);
+  box-shadow: 0 10px 24px rgba(85, 65, 26, 0.08);
+}
+
+.sunbeds-totals {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.sunbeds-totals span {
+  display: grid;
+  gap: 3px;
+  padding: 10px;
+  color: #756333;
+  font-size: 0.78rem;
+  font-weight: 900;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.sunbeds-totals strong {
+  color: #17202a;
+  font-size: 1.3rem;
+}
+
+.sunbeds-primary-button {
+  min-height: 48px;
+  color: #ffffff;
+  font-weight: 900;
+  border: 0;
+  border-radius: 8px;
+  background: #9a650d;
+  box-shadow: 0 8px 18px rgba(154, 101, 13, 0.22);
+}
+
+.sunbed-sales-list {
+  display: grid;
+  gap: 10px;
+}
+
+.sunbeds-section-heading h3 {
+  margin: 0;
+  color: #17202a;
+  font-size: 1.06rem;
+}
+
+.sunbed-sale-card {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  padding: 13px;
+  border: 1px solid rgba(166, 112, 21, 0.2);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.sunbed-sale-card > strong {
+  color: #9a650d;
+  font-size: 1.05rem;
+}
+
+.sunbed-sale-actions {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.sunbed-sale-actions button {
+  min-height: 42px;
+  color: #17202a;
+  font-weight: 900;
+  border: 1px solid rgba(23, 32, 42, 0.14);
+  border-radius: 8px;
+  background: #fffaf0;
+}
+
+.sunbed-sale-actions button:last-child {
+  color: #b7334b;
+  background: #fff7f8;
+}
+
+.active-reservation-date,
+.active-reservation-paid,
+.reservation-duration,
+.existing-reservation-option-dates {
+  margin: 0;
+  color: #53636f;
+  font-size: 0.82rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.active-reservation-paid {
+  color: #006d4f;
 }
 
 @media (min-width: 640px) {
