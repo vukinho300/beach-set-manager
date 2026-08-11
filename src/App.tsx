@@ -8,8 +8,9 @@ type BeachId = 1 | 2;
 type BedId = 1 | 2 | 3 | 4;
 type BedLabel = `Bed ${BedId}`;
 type ReservationSurname = string;
-type TabId = 'transactions' | 'beaches' | 'sunbeds' | 'aquapark' | 'report' | 'settings';
+type TabId = 'beaches' | 'sunbeds' | 'aquapark' | 'settings';
 type BeachShortcut = 'beach1' | 'beach2' | 'beds';
+type SettingsView = 'menu' | 'transactions' | 'report';
 type SetPriceMode = 'fixed' | 'special';
 type AquaparkTicketType = '30min' | '1hour' | 'half_day' | 'one_day' | 'one_week' | 'custom_days';
 type AquaparkPriceMode = 'default' | 'special';
@@ -87,6 +88,7 @@ type NonNumberedSunbedSale = {
   id: string;
   quantity: number;
   totalAmount: number;
+  description?: string;
   createdAt: string;
 };
 
@@ -792,7 +794,8 @@ function normalizeImportedSunbedSale(value: unknown): NonNumberedSunbedSale | nu
     ? candidate.createdAt
     : undefined;
 
-  return id && quantity && totalAmount && createdAt ? { id, quantity, totalAmount, createdAt } : null;
+  const description = typeof candidate.description === 'string' ? candidate.description.trim() || undefined : undefined;
+  return id && quantity && totalAmount && createdAt ? { id, quantity, totalAmount, description, createdAt } : null;
 }
 
 function parseSunbedSales(value: unknown): NonNumberedSunbedSale[] {
@@ -1534,6 +1537,7 @@ function App() {
     () => initialAppData.lastAutomaticResetDate ?? getLocalDateKey(),
   );
   const [activeTab, setActiveTab] = useState<TabId>('beaches');
+  const [settingsView, setSettingsView] = useState<SettingsView>('menu');
   const [activeEditor, setActiveEditor] = useState<ActiveEditor | null>(null);
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
@@ -1680,6 +1684,7 @@ function App() {
 
   function selectTab(tabId: TabId) {
     setActiveTab(tabId);
+    if (tabId === 'settings') setSettingsView('menu');
     window.requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
   }
 
@@ -1935,10 +1940,10 @@ function App() {
     );
   }
 
-  function saveSunbedSale(details: { quantity: number; totalAmount: number }, saleId?: string) {
+  function saveSunbedSale(details: { quantity: number; totalAmount: number; description?: string }, saleId?: string) {
     const now = new Date().toISOString();
     const id = saleId ?? createReservationId('sunbed-sale');
-    const sale: NonNumberedSunbedSale = { id, quantity: details.quantity, totalAmount: details.totalAmount, createdAt: now };
+    const sale: NonNumberedSunbedSale = { id, quantity: details.quantity, totalAmount: details.totalAmount, description: details.description?.trim() || undefined, createdAt: now };
 
     setSunbedSales((currentSales) => saleId
       ? currentSales.map((currentSale) => currentSale.id === saleId ? { ...sale, createdAt: currentSale.createdAt } : currentSale)
@@ -2166,14 +2171,12 @@ function App() {
   }
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell${activeTab === 'beaches' ? ' beaches-active' : ''}`}>
       <header className="topbar">
         <h1>Petalon</h1>
       </header>
 
       <TopNavigation activeTab={activeTab} onSelectTab={selectTab} />
-
-      {activeTab === 'beaches' ? <BeachShortcuts onSelect={selectBeachShortcut} /> : null}
 
       {activeTab === 'sunbeds' ? (
         <SunbedsPage
@@ -2190,12 +2193,9 @@ function App() {
           onDeleteEntry={deleteAquaparkEntry}
           onToggleWristbandReturn={toggleAquaparkWristbandReturn}
         />
-      ) : activeTab === 'transactions' ? (
-        <TransactionsPage transactions={transactions} onDelete={deleteTransaction} />
-      ) : activeTab === 'report' ? (
-        <DailyReport transactions={transactions} />
       ) : activeTab === 'settings' ? (
         <SettingsPage
+          view={settingsView}
           backupMessage={backupMessage}
           importInputRef={importInputRef}
           savedSurnames={savedSurnames}
@@ -2205,6 +2205,11 @@ function App() {
           onImportFile={(file) => void importBackup(file)}
           onResetAppData={resetAppData}
           onDeleteSurname={deleteSavedSurname}
+          onShowTransactions={() => setSettingsView('transactions')}
+          onShowReport={() => setSettingsView('report')}
+          onBackToSettings={() => setSettingsView('menu')}
+          transactions={transactions}
+          onDeleteTransaction={deleteTransaction}
         />
       ) : (
         <>
@@ -2256,6 +2261,8 @@ function App() {
           />
         </>
       )}
+
+      {activeTab === 'beaches' ? <BeachShortcuts onSelect={selectBeachShortcut} /> : null}
 
       {activeSet ? (
         <SetEditorModal
@@ -2838,6 +2845,7 @@ function SunbedsPage({
             <div>
               <p className="eyebrow">{formatTime(sale.createdAt)}</p>
               <strong>{sale.quantity} sunbeds</strong>
+              {sale.description ? <p className="sunbed-sale-description">{sale.description}</p> : null}
             </div>
             <strong>{formatEuro(sale.totalAmount)}</strong>
             <div className="sunbed-sale-actions">
@@ -3147,11 +3155,9 @@ function TopNavigation({
   onSelectTab: (tabId: TabId) => void;
 }) {
   const tabs: Array<{ id: TabId; label: string }> = [
-    { id: 'transactions', label: 'Transactions' },
     { id: 'beaches', label: 'Beaches' },
     { id: 'sunbeds', label: 'Sunbeds' },
     { id: 'aquapark', label: 'Aquapark' },
-    { id: 'report', label: 'Reports' },
     { id: 'settings', label: 'Settings' },
   ];
 
@@ -3180,7 +3186,8 @@ function BeachShortcuts({ onSelect }: { onSelect: (section: BeachShortcut) => vo
   </nav>;
 }
 
-function SettingsPage({ backupMessage, importInputRef, savedSurnames, onDailyReset, onExport, onImport, onImportFile, onResetAppData, onDeleteSurname }: {
+function SettingsPage({ view, backupMessage, importInputRef, savedSurnames, onDailyReset, onExport, onImport, onImportFile, onResetAppData, onDeleteSurname, onShowTransactions, onShowReport, onBackToSettings, transactions, onDeleteTransaction }: {
+  view: SettingsView;
   backupMessage: string | null;
   importInputRef: MutableRefObject<HTMLInputElement | null>;
   savedSurnames: ReservationSurname[];
@@ -3190,9 +3197,21 @@ function SettingsPage({ backupMessage, importInputRef, savedSurnames, onDailyRes
   onImportFile: (file: File | undefined) => void;
   onResetAppData: () => void;
   onDeleteSurname: (surname: string) => void;
+  onShowTransactions: () => void;
+  onShowReport: () => void;
+  onBackToSettings: () => void;
+  transactions: Transaction[];
+  onDeleteTransaction: (transactionId: string) => void;
 }) {
+  if (view === 'transactions') {
+    return <section className="settings-subpage"><button type="button" className="settings-back" onClick={onBackToSettings}>Back to Settings</button><TransactionsPage transactions={transactions} onDelete={onDeleteTransaction} /></section>;
+  }
+  if (view === 'report') {
+    return <section className="settings-subpage"><button type="button" className="settings-back" onClick={onBackToSettings}>Back to Settings</button><DailyReport transactions={transactions} /></section>;
+  }
   return <section className="settings-page" aria-labelledby="settings-heading">
     <header className="report-hero"><p className="eyebrow">Local app controls</p><h2 id="settings-heading">Settings</h2></header>
+    <section className="settings-section"><h3>Records</h3><div className="settings-menu-actions"><button type="button" className="tool-button" onClick={onShowTransactions}>Transactions</button><button type="button" className="tool-button" onClick={onShowReport}>Reports</button></div></section>
     <section className="settings-section"><h3>Daily Reset</h3><p>Start a fresh local business day and clear current-day sales.</p><button type="button" className="reset-button" onClick={onDailyReset}>Daily Reset</button></section>
     <section className="settings-section"><h3>Backups</h3><p>Saved locally on this device. Other phones have separate data.</p><div className="tool-buttons"><button type="button" className="tool-button" onClick={onExport}>Export Backup</button><button type="button" className="tool-button" onClick={onImport}>Import Backup</button></div><input ref={importInputRef} className="file-input" type="file" accept="application/json,.json" onChange={(event) => onImportFile(event.target.files?.[0])} />{backupMessage ? <p className="backup-message">{backupMessage}</p> : null}</section>
     <section className="settings-section"><h3>Local Tools</h3><button type="button" className="danger-link" onClick={onResetAppData}>Reset app data</button><SavedSurnamesManager savedSurnames={savedSurnames} onDeleteSurname={onDeleteSurname} /></section>
@@ -3754,10 +3773,11 @@ function SunbedSaleModal({
 }: {
   sale: NonNumberedSunbedSale | null;
   onClose: () => void;
-  onSave: (details: { quantity: number; totalAmount: number }) => void;
+  onSave: (details: { quantity: number; totalAmount: number; description?: string }) => void;
 }) {
   const [quantity, setQuantity] = useState(String(sale?.quantity ?? 1));
   const [totalAmount, setTotalAmount] = useState(sale ? String(sale.totalAmount) : '');
+  const [description, setDescription] = useState(sale?.description ?? '');
   const parsedQuantity = Number(quantity);
   const parsedAmount = parsePositiveMoney(totalAmount);
   const canSave = Number.isInteger(parsedQuantity) && parsedQuantity > 0 && parsedAmount !== null;
@@ -3782,8 +3802,12 @@ function SunbedSaleModal({
             Total amount paid
             <input type="number" inputMode="decimal" min="0.01" step="0.01" value={totalAmount} onChange={(event) => setTotalAmount(event.target.value)} placeholder="e.g. 32" />
           </label>
+          <label>
+            Description
+            <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} placeholder="Optional description / notes" />
+          </label>
           <button type="button" className="sheet-button sunbeds-primary-button" disabled={!canSave} onClick={() => {
-            if (canSave && parsedAmount !== null) onSave({ quantity: parsedQuantity, totalAmount: parsedAmount });
+            if (canSave && parsedAmount !== null) onSave({ quantity: parsedQuantity, totalAmount: parsedAmount, description: description.trim() || undefined });
           }}>
             Save Sunbed Sale
           </button>
