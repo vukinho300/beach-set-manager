@@ -8,7 +8,8 @@ type BeachId = 1 | 2;
 type BedId = 1 | 2 | 3 | 4;
 type BedLabel = `Bed ${BedId}`;
 type ReservationSurname = string;
-type TabId = 'beach1' | 'beach2' | 'beds' | 'sunbeds' | 'aquapark' | 'transactions' | 'report';
+type TabId = 'transactions' | 'beaches' | 'sunbeds' | 'aquapark' | 'report' | 'settings';
+type BeachShortcut = 'beach1' | 'beach2' | 'beds';
 type SetPriceMode = 'fixed' | 'special';
 type AquaparkTicketType = '30min' | '1hour' | 'half_day' | 'one_day' | 'one_week' | 'custom_days';
 type AquaparkPriceMode = 'default' | 'special';
@@ -1382,7 +1383,7 @@ function isAquaparkEntryExpired(entry: AquaparkEntry, currentTime: Date): boolea
   const expiryTime = entry.ticketType === 'one_week' || entry.ticketType === 'custom_days'
     ? entry.validUntil
     : entry.endAt;
-  return expiryTime ? currentTime.getTime() > new Date(expiryTime).getTime() : false;
+  return expiryTime ? currentTime.getTime() >= new Date(expiryTime).getTime() : false;
 }
 
 function formatTime(value: string): string {
@@ -1532,14 +1533,13 @@ function App() {
   const [lastAutomaticResetDate, setLastAutomaticResetDate] = useState(
     () => initialAppData.lastAutomaticResetDate ?? getLocalDateKey(),
   );
-  const [activeTab, setActiveTab] = useState<TabId>('beach1');
+  const [activeTab, setActiveTab] = useState<TabId>('beaches');
   const [activeEditor, setActiveEditor] = useState<ActiveEditor | null>(null);
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const beachOneRef = useRef<HTMLElement | null>(null);
   const beachTwoRef = useRef<HTMLElement | null>(null);
   const bedsRef = useRef<HTMLElement | null>(null);
-  const hasMountedTabScroll = useRef(false);
   const lastAutomaticResetDateRef = useRef(lastAutomaticResetDate);
 
   useEffect(() => {
@@ -1568,35 +1568,29 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!hasMountedTabScroll.current) {
-      hasMountedTabScroll.current = true;
-      return;
-    }
-
-    window.requestAnimationFrame(() => {
-      scrollToTabSection(activeTab);
+    setAquaparkEntries((currentEntries) => {
+      let changed = false;
+      const updatedEntries = currentEntries.map((entry) => {
+        const isTimedTicket = entry.ticketType !== 'one_week' && entry.ticketType !== 'custom_days';
+        if (!isTimedTicket || !isAquaparkEntryExpired(entry, currentTime) || entry.returnedWristbands.length === entry.wristbands.length) {
+          return entry;
+        }
+        changed = true;
+        return { ...entry, returnedWristbands: [...entry.wristbands] };
+      });
+      return changed ? updatedEntries : currentEntries;
     });
-  }, [activeTab]);
+  }, [currentTime]);
 
   const counts = useMemo(() => {
     return STATUS_ORDER.reduce(
       (summary, status) => ({
         ...summary,
-        [status]: Object.values(sets).filter((set) => set.status === status).length,
+        [status]: Object.values(sets).filter((set) => set.status === status).length + Object.values(extraBeds).filter((bed) => bed.status === status).length,
       }),
       {} as Record<SetStatus, number>,
     );
-  }, [sets]);
-
-  const bedCounts = useMemo(() => {
-    return BED_STATUS_ORDER.reduce(
-      (summary, status) => ({
-        ...summary,
-        [status]: Object.values(extraBeds).filter((bed) => bed.status === status).length,
-      }),
-      {} as Record<BedStatus, number>,
-    );
-  }, [extraBeds]);
+  }, [sets, extraBeds]);
 
   const beachReservationSummaries = useMemo(
     () => getBeachReservations(beachReservations, sets, extraBeds),
@@ -1679,25 +1673,23 @@ function App() {
     };
   }, []);
 
-  function scrollToTabSection(tabId: TabId) {
-    if (tabId === 'aquapark' || tabId === 'sunbeds' || tabId === 'transactions' || tabId === 'report') {
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-      return;
-    }
-
-    const target =
-      tabId === 'beach1' ? beachOneRef.current : tabId === 'beach2' ? beachTwoRef.current : bedsRef.current;
-
+  function scrollToBeachSection(section: BeachShortcut) {
+    const target = section === 'beach1' ? beachOneRef.current : section === 'beach2' ? beachTwoRef.current : bedsRef.current;
     target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
   function selectTab(tabId: TabId) {
-    if (tabId === activeTab) {
-      scrollToTabSection(tabId);
+    setActiveTab(tabId);
+    window.requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
+  }
+
+  function selectBeachShortcut(section: BeachShortcut) {
+    if (activeTab === 'beaches') {
+      scrollToBeachSection(section);
       return;
     }
-
-    setActiveTab(tabId);
+    setActiveTab('beaches');
+    window.requestAnimationFrame(() => scrollToBeachSection(section));
   }
 
   function openSetEditor(setId: number) {
@@ -1969,28 +1961,19 @@ function App() {
   }
 
   function saveAquaparkEntry(details: AquaparkEntryDetails) {
-    const conflictingEntries = aquaparkEntries.filter(
-      (entry) =>
-        entry.status === 'active' &&
-        !isAquaparkEntryExpired(entry, new Date()) &&
-        entry.wristbands.some((wristband) => !entry.returnedWristbands.includes(wristband) && details.wristbands.includes(wristband)),
-    );
-
-    if (conflictingEntries.length) {
-      const conflictingWristbands = [...new Set(
-        conflictingEntries.flatMap((entry) => entry.wristbands.filter((wristband) => !entry.returnedWristbands.includes(wristband) && details.wristbands.includes(wristband))),
-      )].join(', ');
-      const confirmed = window.confirm(
-        `Wristband ${conflictingWristbands} is already active in the Aquapark tracker. Create another entry anyway?`,
-      );
-
-      if (!confirmed) {
-        return;
-      }
-    }
-
     const entry = createAquaparkEntry(details);
-    setAquaparkEntries((currentEntries) => [entry, ...currentEntries]);
+    setAquaparkEntries((currentEntries) => [
+      entry,
+      ...currentEntries.map((currentEntry) => {
+        if (currentEntry.status !== 'active') return currentEntry;
+        const reassignedWristbands = currentEntry.wristbands.filter(
+          (wristband) => details.wristbands.includes(wristband) && !currentEntry.returnedWristbands.includes(wristband),
+        );
+        return reassignedWristbands.length
+          ? { ...currentEntry, returnedWristbands: [...currentEntry.returnedWristbands, ...reassignedWristbands] }
+          : currentEntry;
+      }),
+    ]);
     setTransactions((currentTransactions) => [...currentTransactions, {
       id: createReservationId('transaction'), type: 'aquapark', amount: entry.totalPrice, createdAt: entry.createdAt,
       resourceId: entry.id, resourceLabel: `Wristbands ${entry.wristbands.join(', ')}`,
@@ -2013,6 +1996,11 @@ function App() {
   }
 
   function toggleAquaparkWristbandReturn(entryId: string, wristband: number) {
+    const entry = aquaparkEntries.find((candidate) => candidate.id === entryId);
+    const isTimedTicket = entry?.ticketType !== 'one_week' && entry?.ticketType !== 'custom_days';
+    if (entry && isTimedTicket && isAquaparkEntryExpired(entry, currentTime)) {
+      return;
+    }
     setAquaparkEntries((currentEntries) => currentEntries.map((entry) => entry.id !== entryId ? entry : {
       ...entry,
       returnedWristbands: entry.returnedWristbands.includes(wristband)
@@ -2180,47 +2168,12 @@ function App() {
   return (
     <main className="app-shell">
       <header className="topbar">
-        <div>
-          <p className="eyebrow">Summer shift board</p>
-          <h1>Beach Set Manager</h1>
-        </div>
-        <div className="topbar-actions">
-          <button className="report-button" type="button" onClick={() => selectTab('transactions')}>
-            Transactions
-          </button>
-          <button className="report-button" type="button" onClick={() => selectTab('report')}>
-            Report
-          </button>
-          <button className="reset-button" type="button" onClick={resetDay}>
-            Daily Reset
-          </button>
-        </div>
+        <h1>Petalon</h1>
       </header>
 
-      <details className="local-tools">
-        <summary>Backups and local tools</summary>
-        <p>Saved locally on this device. Other phones have separate data.</p>
-        <div className="tool-buttons">
-          <button type="button" className="tool-button" onClick={exportBackup}>
-            Export Backup
-          </button>
-          <button type="button" className="tool-button" onClick={openImportPicker}>
-            Import Backup
-          </button>
-        </div>
-        <input
-          ref={importInputRef}
-          className="file-input"
-          type="file"
-          accept="application/json,.json"
-          onChange={(event) => void importBackup(event.target.files?.[0])}
-        />
-        {backupMessage ? <p className="backup-message">{backupMessage}</p> : null}
-        <button type="button" className="danger-link" onClick={resetAppData}>
-          Reset app data
-        </button>
-        <SavedSurnamesManager savedSurnames={savedSurnames} onDeleteSurname={deleteSavedSurname} />
-      </details>
+      <TopNavigation activeTab={activeTab} onSelectTab={selectTab} />
+
+      {activeTab === 'beaches' ? <BeachShortcuts onSelect={selectBeachShortcut} /> : null}
 
       {activeTab === 'sunbeds' ? (
         <SunbedsPage
@@ -2241,6 +2194,18 @@ function App() {
         <TransactionsPage transactions={transactions} onDelete={deleteTransaction} />
       ) : activeTab === 'report' ? (
         <DailyReport transactions={transactions} />
+      ) : activeTab === 'settings' ? (
+        <SettingsPage
+          backupMessage={backupMessage}
+          importInputRef={importInputRef}
+          savedSurnames={savedSurnames}
+          onDailyReset={resetDay}
+          onExport={exportBackup}
+          onImport={openImportPicker}
+          onImportFile={(file) => void importBackup(file)}
+          onResetAppData={resetAppData}
+          onDeleteSurname={deleteSavedSurname}
+        />
       ) : (
         <>
           <ActiveReservationsSection
@@ -2287,7 +2252,6 @@ function App() {
             sectionRef={bedsRef}
             beds={extraBeds}
             beachReservations={beachReservations}
-            counts={bedCounts}
             onEditBed={openBedEditor}
           />
         </>
@@ -2340,7 +2304,6 @@ function App() {
         />
       ) : null}
 
-      <BottomTabs activeTab={activeTab} onSelectTab={selectTab} />
     </main>
   );
 }
@@ -2369,7 +2332,6 @@ function BeachOne({
       <BeachHeader
         title="Beach 1"
         subtitle="Sets 1-20"
-        summary="Two vertical rows: Upper starts at 20, Lower starts at 1"
       />
       <div className="beach-one-layout beach-map" aria-label="Beach 1 physical layout">
         <div className="water-edge" aria-hidden="true">
@@ -2419,7 +2381,7 @@ function BeachTwo({
       className="beach-section beach-two"
       aria-labelledby="beach-two-heading"
     >
-      <BeachHeader title="Beach 2" subtitle="Sets 21-56" summary="One long promenade from 21 to 56" />
+      <BeachHeader title="Beach 2" subtitle="Sets 21-56" />
       <div className="beach-two-path beach-map" aria-label="Beach 2 long beach path">
         <span className="path-cue start-cue">Start: Set 21</span>
         <span className="path-cue scroll-cue">Scroll to Set 56</span>
@@ -2443,11 +2405,9 @@ function BeachTwo({
 function BeachHeader({
   title,
   subtitle,
-  summary,
 }: {
   title: string;
   subtitle: string;
-  summary: string;
 }) {
   return (
     <div className="beach-header">
@@ -2455,7 +2415,6 @@ function BeachHeader({
         <p className="eyebrow">{subtitle}</p>
         <h2 id={title === 'Beach 1' ? 'beach-one-heading' : 'beach-two-heading'}>{title}</h2>
       </div>
-      <span>{summary}</span>
     </div>
   );
 }
@@ -2544,13 +2503,11 @@ function ExtraBedsSection({
   sectionRef,
   beds,
   beachReservations,
-  counts,
   onEditBed,
 }: {
   sectionRef: MutableRefObject<HTMLElement | null>;
   beds: ExtraBedMap;
   beachReservations: BeachReservation[];
-  counts: Record<BedStatus, number>;
   onEditBed: (bedId: BedId) => void;
 }) {
   return (
@@ -2563,18 +2520,8 @@ function ExtraBedsSection({
     >
       <div className="beach-header">
         <div>
-          <p className="eyebrow">Separate from sets 1-56</p>
           <h2 id="extra-beds-heading">Extra Beds</h2>
         </div>
-        <span>Four individual beds outside the normal set map</span>
-      </div>
-
-      <div className="bed-status-strip" aria-label="Extra bed status totals">
-        {BED_STATUS_ORDER.map((status) => (
-          <span className={`bed-status-pill status-${status}`} key={status}>
-            {STATUS_META[status].label}: <strong>{counts[status]}</strong>
-          </span>
-        ))}
       </div>
 
       <div className="extra-beds-grid">
@@ -2956,7 +2903,7 @@ function AquaparkPage({
               <AquaparkEntryCard
                 key={entry.id}
                 entry={entry}
-                expired={isAquaparkEntryExpired(entry, currentTime)}
+                expired={isAquaparkEntryExpired(entry, currentTime) && entry.returnedWristbands.length < entry.wristbands.length}
                 onDelete={onDeleteEntry}
                 onToggleWristbandReturn={onToggleWristbandReturn}
               />
@@ -3192,7 +3139,7 @@ function TransactionsPage({ transactions, onDelete }: { transactions: Transactio
   </section>;
 }
 
-function BottomTabs({
+function TopNavigation({
   activeTab,
   onSelectTab,
 }: {
@@ -3200,19 +3147,20 @@ function BottomTabs({
   onSelectTab: (tabId: TabId) => void;
 }) {
   const tabs: Array<{ id: TabId; label: string }> = [
-    { id: 'beach1', label: 'Beach 1' },
-    { id: 'beach2', label: 'Beach 2' },
-    { id: 'beds', label: 'Beds' },
+    { id: 'transactions', label: 'Transactions' },
+    { id: 'beaches', label: 'Beaches' },
     { id: 'sunbeds', label: 'Sunbeds' },
     { id: 'aquapark', label: 'Aquapark' },
+    { id: 'report', label: 'Reports' },
+    { id: 'settings', label: 'Settings' },
   ];
 
   return (
-    <nav className="bottom-tabs" aria-label="Main app sections">
+    <nav className="top-navigation" aria-label="Main app sections">
       {tabs.map((tab) => (
         <button
           type="button"
-          className={`bottom-tab tab-${tab.id}${activeTab === tab.id ? ' active' : ''}`}
+          className={`top-navigation-button tab-${tab.id}${activeTab === tab.id ? ' active' : ''}`}
           onClick={() => onSelectTab(tab.id)}
           aria-current={activeTab === tab.id ? 'page' : undefined}
           key={tab.id}
@@ -3222,6 +3170,33 @@ function BottomTabs({
       ))}
     </nav>
   );
+}
+
+function BeachShortcuts({ onSelect }: { onSelect: (section: BeachShortcut) => void }) {
+  return <nav className="beach-shortcuts" aria-label="Beach sections">
+    <button type="button" onClick={() => onSelect('beach1')}>Beach 1</button>
+    <button type="button" onClick={() => onSelect('beach2')}>Beach 2</button>
+    <button type="button" onClick={() => onSelect('beds')}>Beds</button>
+  </nav>;
+}
+
+function SettingsPage({ backupMessage, importInputRef, savedSurnames, onDailyReset, onExport, onImport, onImportFile, onResetAppData, onDeleteSurname }: {
+  backupMessage: string | null;
+  importInputRef: MutableRefObject<HTMLInputElement | null>;
+  savedSurnames: ReservationSurname[];
+  onDailyReset: () => void;
+  onExport: () => void;
+  onImport: () => void;
+  onImportFile: (file: File | undefined) => void;
+  onResetAppData: () => void;
+  onDeleteSurname: (surname: string) => void;
+}) {
+  return <section className="settings-page" aria-labelledby="settings-heading">
+    <header className="report-hero"><p className="eyebrow">Local app controls</p><h2 id="settings-heading">Settings</h2></header>
+    <section className="settings-section"><h3>Daily Reset</h3><p>Start a fresh local business day and clear current-day sales.</p><button type="button" className="reset-button" onClick={onDailyReset}>Daily Reset</button></section>
+    <section className="settings-section"><h3>Backups</h3><p>Saved locally on this device. Other phones have separate data.</p><div className="tool-buttons"><button type="button" className="tool-button" onClick={onExport}>Export Backup</button><button type="button" className="tool-button" onClick={onImport}>Import Backup</button></div><input ref={importInputRef} className="file-input" type="file" accept="application/json,.json" onChange={(event) => onImportFile(event.target.files?.[0])} />{backupMessage ? <p className="backup-message">{backupMessage}</p> : null}</section>
+    <section className="settings-section"><h3>Local Tools</h3><button type="button" className="danger-link" onClick={onResetAppData}>Reset app data</button><SavedSurnamesManager savedSurnames={savedSurnames} onDeleteSurname={onDeleteSurname} /></section>
+  </section>;
 }
 
 function SetDetails({
