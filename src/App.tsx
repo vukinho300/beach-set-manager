@@ -1283,10 +1283,10 @@ function formatTime(value: string): string {
 }
 
 function parseWristbandNumbers(value: string): { wristbands: number[]; error?: string } {
-  const parts = value.split(',').map((part) => part.trim());
+  const parts = value.trim().split(/[\s,]+/).filter(Boolean);
 
   if (!parts.length || parts.some((part) => !/^\d+$/.test(part))) {
-    return { wristbands: [], error: 'Enter one or more positive wristband numbers, separated by commas.' };
+    return { wristbands: [], error: 'Enter one or more positive wristband numbers, separated by commas or spaces.' };
   }
 
   const wristbands = [...new Set(parts.map(Number))];
@@ -3754,13 +3754,12 @@ function AquaparkEntryModal({
             Wristband numbers
             <input
               type="text"
-              inputMode="numeric"
               value={wristbandInput}
               onChange={(event) => setWristbandInput(event.target.value)}
               placeholder="e.g. 34, 4, 5"
               aria-describedby="wristband-help"
             />
-            <small id="wristband-help">Separate multiple wristbands with commas.</small>
+            <small id="wristband-help">Separate multiple wristbands with commas or spaces.</small>
           </label>
           {wristbandInput && parsedWristbands.error ? <p className="field-error">{parsedWristbands.error}</p> : null}
 
