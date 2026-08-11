@@ -2,13 +2,13 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { MutableRefObject } from 'react';
 import './App.css';
 
-type SetStatus = 'free' | 'paid' | 'reserved' | 'partial';
-type BedStatus = Exclude<SetStatus, 'partial'>;
+type SetStatus = 'free' | 'paid' | 'reserved' | 'left';
+type BedStatus = Exclude<SetStatus, 'left'>;
 type BeachId = 1 | 2;
 type BedId = 1 | 2 | 3 | 4;
 type BedLabel = `Bed ${BedId}`;
 type ReservationSurname = string;
-type TabId = 'beach1' | 'beach2' | 'beds' | 'sunbeds' | 'aquapark' | 'report';
+type TabId = 'beach1' | 'beach2' | 'beds' | 'sunbeds' | 'aquapark' | 'transactions' | 'report';
 type SetPriceMode = 'fixed' | 'special';
 type AquaparkTicketType = '30min' | '1hour' | 'half_day' | 'one_day' | 'one_week' | 'custom_days';
 type AquaparkPriceMode = 'default' | 'special';
@@ -20,7 +20,6 @@ type BeachSet = {
   beachReservationId?: string;
   surname?: string;
   reservedDays?: number;
-  partialNote?: string;
   price?: number;
   priceMode?: SetPriceMode;
   dailySaleId?: string;
@@ -80,6 +79,7 @@ type AquaparkEntry = {
   description?: string;
   createdAt: string;
   closedAt?: string;
+  returnedWristbands: number[];
 };
 
 type NonNumberedSunbedSale = {
@@ -124,6 +124,18 @@ type DailySale =
       createdAt: string;
     };
 
+type TransactionType = 'beach_set' | 'bed' | 'sunbed' | 'beach_reservation' | 'aquapark';
+type Transaction = {
+  id: string;
+  type: TransactionType;
+  amount: number;
+  createdAt: string;
+  resourceId?: string;
+  resourceLabel?: string;
+  description?: string;
+  metadata?: Record<string, unknown>;
+};
+
 type AquaparkEntryDetails = {
   wristbands: number[];
   ticketType: AquaparkTicketType;
@@ -136,7 +148,7 @@ type AquaparkEntryDetails = {
 
 type BeachSetMap = Record<number, BeachSet>;
 type ExtraBedMap = Record<BedId, ExtraBed>;
-type DetailMode = 'actions' | 'reserved' | 'partial';
+type DetailMode = 'actions' | 'reserved';
 type ActiveEditor =
   | { kind: 'set'; id: number }
   | { kind: 'bed'; id: BedId }
@@ -164,12 +176,12 @@ type AppData = {
   savedSurnames: ReservationSurname[];
   sunbedSales: NonNumberedSunbedSale[];
   aquaparkEntries: AquaparkEntry[];
-  dailySales: DailySale[];
+  transactions: Transaction[];
   lastAutomaticResetDate?: string;
 };
 type BackupPayload = AppData & {
   app: 'Beach Set Manager';
-  version: 10;
+  version: 11;
   exportedAt: string;
 };
 
@@ -180,12 +192,11 @@ const OLDER_STORAGE_KEY = 'sunbed-beach-manager:v3';
 const OLD_STORAGE_KEY = 'sunbed-beach-manager:v2';
 const OLDEST_STORAGE_KEY = 'sunbed-beach-manager:v1';
 const APP_STORAGE_KEYS = [STORAGE_KEY, LEGACY_STORAGE_KEY, OLDER_STORAGE_KEY, OLD_STORAGE_KEY, OLDEST_STORAGE_KEY];
-const STATUS_ORDER: SetStatus[] = ['free', 'paid', 'reserved', 'partial'];
+const STATUS_ORDER: SetStatus[] = ['free', 'paid', 'reserved', 'left'];
 const BED_STATUS_ORDER: BedStatus[] = ['free', 'paid', 'reserved'];
 const BEACH_ONE_UPPER_ROW = [20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10];
 const BEACH_ONE_LOWER_ROW = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 const EXTRA_BED_IDS: BedId[] = [1, 2, 3, 4];
-const PARTIAL_OPTIONS = ['1 sunbed only', '1 sunbed + parasol', '2 sunbeds no parasol'];
 const AQUAPARK_TICKETS: Record<AquaparkTicketType, { label: string; price: number }> = {
   '30min': { label: '30 minutes', price: 12 },
   '1hour': { label: '1 hour', price: 14 },
@@ -199,7 +210,7 @@ const STATUS_META: Record<SetStatus, { label: string; shortLabel: string }> = {
   free: { label: 'Free', shortLabel: 'Free' },
   paid: { label: 'Paid', shortLabel: 'Paid' },
   reserved: { label: 'Reserved', shortLabel: 'Reserved' },
-  partial: { label: 'Partial', shortLabel: 'Partial' },
+  left: { label: 'Left', shortLabel: 'Left' },
 };
 
 function getBeachForSet(id: number): BeachId {
@@ -243,7 +254,7 @@ function createFreeAppData(): AppData {
     savedSurnames: [],
     sunbedSales: [],
     aquaparkEntries: [],
-    dailySales: [],
+    transactions: [],
     lastAutomaticResetDate: getLocalDateKey(),
   };
 }
@@ -411,7 +422,7 @@ function createBeachReservation(details: BeachReservationDetails): BeachReservat
 }
 
 function isSetStatus(value: unknown): value is SetStatus {
-  return typeof value === 'string' && STATUS_ORDER.includes(value as SetStatus);
+  return typeof value === 'string' && (STATUS_ORDER.includes(value as SetStatus) || value === 'partial');
 }
 
 function isBedStatus(value: unknown): value is BedStatus {
@@ -444,11 +455,10 @@ function normalizeSet(value: unknown, id: number): BeachSet {
   return {
     id,
     beach: getBeachForSet(id),
-    status: value.status,
+    status: (value as { status?: unknown }).status === 'partial' ? 'free' : value.status,
     beachReservationId: value.beachReservationId,
     surname: value.surname,
     reservedDays: value.reservedDays,
-    partialNote: value.partialNote,
     price: normalizePositiveMoney(value.price),
     priceMode: isSetPriceMode(value.priceMode) ? value.priceMode : undefined,
     dailySaleId: typeof value.dailySaleId === 'string' ? value.dailySaleId : undefined,
@@ -466,7 +476,6 @@ function normalizeImportedSet(value: unknown, id: number): BeachSet | null {
     typeof value.beachReservationId === 'string' && value.beachReservationId.trim()
       ? value.beachReservationId
       : undefined;
-  const partialNote = typeof value.partialNote === 'string' ? value.partialNote.trim() : undefined;
   const price = normalizePositiveMoney(value.price);
   const priceMode = isSetPriceMode(value.priceMode) ? value.priceMode : undefined;
   const dailySaleId = typeof value.dailySaleId === 'string' && value.dailySaleId.trim()
@@ -481,14 +490,13 @@ function normalizeImportedSet(value: unknown, id: number): BeachSet | null {
   return {
     id,
     beach: getBeachForSet(id),
-    status: value.status,
+    status: (value as { status?: unknown }).status === 'partial' ? 'free' : value.status,
     beachReservationId,
     surname: surname || undefined,
     reservedDays,
     price,
     priceMode: price ? priceMode : undefined,
     dailySaleId,
-    partialNote: partialNote || undefined,
     updatedAt,
   };
 }
@@ -685,6 +693,9 @@ function normalizeImportedAquaparkEntry(value: unknown): AquaparkEntry | null {
     description,
     createdAt,
     closedAt,
+    returnedWristbands: Array.isArray(candidate.returnedWristbands)
+      ? [...new Set(candidate.returnedWristbands.filter((wristband) => wristbands.includes(wristband)))]
+      : [],
   };
 }
 
@@ -803,6 +814,71 @@ function parseDailySales(value: unknown): DailySale[] {
     const sale = normalizeImportedDailySale(rawSale);
     return sale && !sales.some((existing) => existing.id === sale.id) ? [...sales, sale] : sales;
   }, []);
+}
+
+function legacySaleToTransaction(sale: DailySale): Transaction {
+  if (sale.kind === 'beach_set') {
+    return { id: sale.id, type: 'beach_set', amount: sale.amount, createdAt: sale.createdAt, resourceId: String(sale.setId), resourceLabel: `Set ${sale.setId}` };
+  }
+  if (sale.kind === 'bed') {
+    return { id: sale.id, type: 'bed', amount: sale.amount, createdAt: sale.createdAt, resourceId: String(sale.bedId), resourceLabel: `Bed ${sale.bedId}` };
+  }
+  if (sale.kind === 'sunbed') {
+    return { id: sale.id, type: 'sunbed', amount: sale.amount, createdAt: sale.createdAt, resourceId: sale.sunbedSaleId, resourceLabel: `${sale.quantity} sunbeds`, metadata: { quantity: sale.quantity } };
+  }
+  return {
+    id: sale.id,
+    type: 'aquapark',
+    amount: sale.amount,
+    createdAt: sale.createdAt,
+    resourceId: sale.entryId,
+    resourceLabel: `Wristbands (${sale.wristbandCount})`,
+    metadata: { ticketType: sale.ticketType, wristbandCount: sale.wristbandCount, unitPrice: sale.unitPrice, customDays: sale.customDays },
+  };
+}
+
+function normalizeImportedTransaction(value: unknown): Transaction | null {
+  if (!value || typeof value !== 'object') return null;
+  const candidate = value as Partial<Transaction>;
+  const id = typeof candidate.id === 'string' && candidate.id.trim() ? candidate.id : undefined;
+  const amount = normalizePositiveMoney(candidate.amount);
+  const createdAt = typeof candidate.createdAt === 'string' && !Number.isNaN(new Date(candidate.createdAt).getTime()) ? candidate.createdAt : undefined;
+  const type: TransactionType | undefined = ['beach_set', 'bed', 'sunbed', 'beach_reservation', 'aquapark'].includes(candidate.type as string)
+    ? candidate.type as TransactionType
+    : undefined;
+  if (!id || !amount || !createdAt || !type) return null;
+  return {
+    id,
+    type,
+    amount,
+    createdAt,
+    resourceId: typeof candidate.resourceId === 'string' ? candidate.resourceId : undefined,
+    resourceLabel: typeof candidate.resourceLabel === 'string' ? candidate.resourceLabel : undefined,
+    description: typeof candidate.description === 'string' ? candidate.description : undefined,
+    metadata: candidate.metadata && typeof candidate.metadata === 'object' && !Array.isArray(candidate.metadata) ? candidate.metadata : undefined,
+  };
+}
+
+function parseTransactions(value: unknown, legacySales?: unknown): Transaction[] {
+  const rawTransactions = Array.isArray(value) ? value : [];
+  const transactions = rawTransactions.reduce<Transaction[]>((items, raw) => {
+    const transaction = normalizeImportedTransaction(raw);
+    return transaction && !items.some((item) => item.id === transaction.id) ? [...items, transaction] : items;
+  }, []);
+  return transactions.length || !legacySales ? transactions : parseDailySales(legacySales).map(legacySaleToTransaction);
+}
+
+function addKnownReservationPaymentTransactions(transactions: Transaction[], reservations: BeachReservation[]): Transaction[] {
+  const today = getLocalDateKey();
+  const reservationTransactions = reservations
+    .filter((reservation) => reservation.totalAmountPaid && reservation.paymentRecordedAt && getLocalDateKey(new Date(reservation.paymentRecordedAt)) === today)
+    .filter((reservation) => !transactions.some((transaction) => transaction.type === 'beach_reservation' && transaction.resourceId === reservation.id))
+    .map((reservation) => ({
+      id: createReservationId('transaction'), type: 'beach_reservation' as const, amount: reservation.totalAmountPaid as number,
+      createdAt: reservation.paymentRecordedAt as string, resourceId: reservation.id, resourceLabel: reservation.surname,
+      description: formatReservationDates(reservation.startDate, reservation.endDate),
+    }));
+  return [...transactions, ...reservationTransactions];
 }
 
 function parseSets(value: unknown, allowMissingAsFree = false): BeachSetMap | null {
@@ -961,6 +1037,7 @@ function parseImportedAppData(value: unknown): AppData | null {
     sunbedSales?: unknown;
     aquaparkEntries?: unknown;
     dailySales?: unknown;
+    transactions?: unknown;
   };
   const sets = payload.sets ? parseSets(payload.sets) : parseSets(value);
 
@@ -987,7 +1064,7 @@ function parseImportedAppData(value: unknown): AppData | null {
     savedSurnames: normalizeSavedSurnames(payload.savedSurnames),
     sunbedSales: parseSunbedSales(payload.sunbedSales),
     aquaparkEntries: parseAquaparkEntries(payload.aquaparkEntries),
-    dailySales: parseDailySales(payload.dailySales),
+    transactions: addKnownReservationPaymentTransactions(parseTransactions(payload.transactions, payload.dailySales), migratedBeachData.beachReservations),
     lastAutomaticResetDate: normalizeResetDate(payload.lastAutomaticResetDate),
   };
 }
@@ -1025,6 +1102,7 @@ function loadSavedAppData(): AppData {
         sunbedSales?: unknown;
         aquaparkEntries?: unknown;
         dailySales?: unknown;
+        transactions?: unknown;
         lastAutomaticResetDate?: unknown;
       };
       const sets = parseSets(parsed.sets, true);
@@ -1044,7 +1122,7 @@ function loadSavedAppData(): AppData {
           savedSurnames: normalizeSavedSurnames(parsed.savedSurnames),
           sunbedSales: parseSunbedSales(parsed.sunbedSales),
           aquaparkEntries: parseAquaparkEntries(parsed.aquaparkEntries),
-          dailySales: parseDailySales(parsed.dailySales),
+          transactions: addKnownReservationPaymentTransactions(parseTransactions(parsed.transactions, parsed.dailySales), migratedBeachData.beachReservations),
           lastAutomaticResetDate: normalizeResetDate(parsed.lastAutomaticResetDate),
         };
       }
@@ -1076,7 +1154,7 @@ function loadSavedAppData(): AppData {
           savedSurnames: normalizeSavedSurnames(parsed.savedSurnames),
           sunbedSales: [],
           aquaparkEntries: [],
-          dailySales: [],
+          transactions: [],
         };
       }
     }
@@ -1102,7 +1180,7 @@ function loadSavedAppData(): AppData {
           savedSurnames: [],
           sunbedSales: [],
           aquaparkEntries: [],
-          dailySales: [],
+          transactions: [],
         };
       }
     }
@@ -1122,7 +1200,7 @@ function loadSavedAppData(): AppData {
           savedSurnames: [],
           sunbedSales: [],
           aquaparkEntries: [],
-          dailySales: [],
+          transactions: [],
         };
       }
     }
@@ -1139,7 +1217,7 @@ function loadSavedAppData(): AppData {
         savedSurnames: [],
         sunbedSales: [],
         aquaparkEntries: [],
-        dailySales: [],
+        transactions: [],
       };
     }
 
@@ -1156,12 +1234,12 @@ function getSets(start: number, end: number) {
 function updateSetStatus(set: BeachSet, status: SetStatus, details: Partial<BeachSet> = {}): BeachSet {
   const clearedDetails =
     status === 'reserved'
-      ? { partialNote: undefined, price: undefined, priceMode: undefined, dailySaleId: undefined }
-    : status === 'partial'
-        ? { beachReservationId: undefined, surname: undefined, reservedDays: undefined, price: undefined, priceMode: undefined, dailySaleId: undefined }
-        : status === 'paid'
-          ? { beachReservationId: undefined, surname: undefined, reservedDays: undefined, partialNote: undefined }
-          : { beachReservationId: undefined, surname: undefined, reservedDays: undefined, partialNote: undefined, price: undefined, priceMode: undefined, dailySaleId: undefined };
+      ? { price: undefined, priceMode: undefined, dailySaleId: undefined }
+      : status === 'paid'
+        ? { beachReservationId: undefined, surname: undefined, reservedDays: undefined }
+        : status === 'left'
+          ? { beachReservationId: undefined, surname: undefined, reservedDays: undefined }
+          : { beachReservationId: undefined, surname: undefined, reservedDays: undefined, price: undefined, priceMode: undefined, dailySaleId: undefined };
 
   return {
     ...set,
@@ -1296,6 +1374,7 @@ function createAquaparkEntry(details: AquaparkEntryDetails): AquaparkEntry {
     dailyUnitPrice: details.ticketType === 'custom_days' ? unitPrice : undefined,
     description: details.description?.trim() || undefined,
     createdAt: start.toISOString(),
+    returnedWristbands: [],
   };
 }
 
@@ -1340,7 +1419,7 @@ function initializeAppDataForToday(appData: AppData, today = getLocalDateKey()):
     extraBeds: applyDailyResetToBeds(appData.extraBeds),
     beachReservations: applyDailyResetToBeachReservations(appData.beachReservations),
     sunbedSales: [],
-    dailySales: [],
+    transactions: [],
     lastAutomaticResetDate: today,
   };
 }
@@ -1418,7 +1497,7 @@ function getBeachReservations(
 function createBackupPayload(appData: AppData): BackupPayload {
   return {
     app: 'Beach Set Manager',
-    version: 10,
+    version: 11,
     exportedAt: new Date().toISOString(),
     sets: appData.sets,
     extraBeds: appData.extraBeds,
@@ -1426,7 +1505,7 @@ function createBackupPayload(appData: AppData): BackupPayload {
     savedSurnames: appData.savedSurnames,
     sunbedSales: appData.sunbedSales,
     aquaparkEntries: appData.aquaparkEntries,
-    dailySales: appData.dailySales,
+    transactions: appData.transactions,
     lastAutomaticResetDate: appData.lastAutomaticResetDate,
   };
 }
@@ -1447,7 +1526,8 @@ function App() {
   const [aquaparkEntries, setAquaparkEntries] = useState<AquaparkEntry[]>(
     () => initialAppData.aquaparkEntries,
   );
-  const [dailySales, setDailySales] = useState<DailySale[]>(() => initialAppData.dailySales);
+  const [transactions, setTransactions] = useState<Transaction[]>(() => initialAppData.transactions);
+  const [reservationsCollapsed, setReservationsCollapsed] = useState(() => window.localStorage.getItem('beach-reservations-collapsed') === 'true');
   const [currentTime, setCurrentTime] = useState(() => new Date());
   const [lastAutomaticResetDate, setLastAutomaticResetDate] = useState(
     () => initialAppData.lastAutomaticResetDate ?? getLocalDateKey(),
@@ -1472,11 +1552,15 @@ function App() {
         savedSurnames,
         sunbedSales,
         aquaparkEntries,
-        dailySales,
+        transactions,
         lastAutomaticResetDate,
       }),
     );
-  }, [sets, extraBeds, beachReservations, savedSurnames, sunbedSales, aquaparkEntries, dailySales, lastAutomaticResetDate]);
+  }, [sets, extraBeds, beachReservations, savedSurnames, sunbedSales, aquaparkEntries, transactions, lastAutomaticResetDate]);
+
+  useEffect(() => {
+    window.localStorage.setItem('beach-reservations-collapsed', String(reservationsCollapsed));
+  }, [reservationsCollapsed]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setCurrentTime(new Date()), 60_000);
@@ -1518,6 +1602,9 @@ function App() {
     () => getBeachReservations(beachReservations, sets, extraBeds),
     [beachReservations, sets, extraBeds],
   );
+  const setRevenue = useMemo(() => Object.fromEntries(
+    Object.values(sets).map((set) => [set.id, transactions.filter((transaction) => transaction.type === 'beach_set' && transaction.resourceId === String(set.id)).reduce((total, transaction) => total + transaction.amount, 0)]),
+  ) as Record<number, number>, [sets, transactions]);
 
   const activeSet = activeEditor?.kind === 'set' ? sets[activeEditor.id] : null;
   const activeBed = activeEditor?.kind === 'bed' ? extraBeds[activeEditor.id] : null;
@@ -1536,7 +1623,7 @@ function App() {
     setExtraBeds((currentBeds) => applyDailyResetToBeds(currentBeds));
       setBeachReservations((currentReservations) => applyDailyResetToBeachReservations(currentReservations));
     setSunbedSales([]);
-    setDailySales([]);
+    setTransactions([]);
     closeEditor();
 
     if (message) {
@@ -1593,7 +1680,7 @@ function App() {
   }, []);
 
   function scrollToTabSection(tabId: TabId) {
-    if (tabId === 'aquapark' || tabId === 'sunbeds' || tabId === 'report') {
+    if (tabId === 'aquapark' || tabId === 'sunbeds' || tabId === 'transactions' || tabId === 'report') {
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
@@ -1643,47 +1730,33 @@ function App() {
 
   function saveSet(setId: number, status: SetStatus, details?: Partial<BeachSet>) {
     const price = status === 'paid' ? normalizePositiveMoney(details?.price) : undefined;
-    const existingSaleId = sets[setId].dailySaleId;
-    const dailySaleId = status === 'paid' && price ? existingSaleId ?? createReservationId('beach-sale') : undefined;
-
-    if (status === 'paid' && price && dailySaleId) {
+    if (status === 'paid' && price) {
       const now = new Date().toISOString();
-      setDailySales((currentSales) => {
-        const existingSale = currentSales.find((sale) => sale.id === dailySaleId);
-
-        if (existingSale?.kind === 'beach_set') {
-          return currentSales.map((sale) => sale.id === dailySaleId ? { ...sale, amount: price } : sale);
-        }
-
-        return [...currentSales, { id: dailySaleId, kind: 'beach_set', setId, amount: price, createdAt: now }];
-      });
+      setTransactions((currentTransactions) => [...currentTransactions, {
+        id: createReservationId('transaction'), type: 'beach_set', amount: price, createdAt: now,
+        resourceId: String(setId), resourceLabel: `Set ${setId}`,
+      }]);
     }
 
     setSets((currentSets) => ({
       ...currentSets,
-      [setId]: updateSetStatus(currentSets[setId], status, { ...details, dailySaleId }),
+      [setId]: updateSetStatus(currentSets[setId], status, details),
     }));
   }
 
   function saveBed(bedId: BedId, status: BedStatus, details?: Partial<ExtraBed>) {
     const price = status === 'paid' ? normalizePositiveMoney(details?.price) : undefined;
-    const existingSaleId = extraBeds[bedId].dailySaleId;
-    const dailySaleId = status === 'paid' && price ? existingSaleId ?? createReservationId('bed-sale') : undefined;
-
-    if (status === 'paid' && price && dailySaleId) {
+    if (status === 'paid' && price) {
       const now = new Date().toISOString();
-      setDailySales((currentSales) => {
-        const existingSale = currentSales.find((sale) => sale.id === dailySaleId);
-        if (existingSale?.kind === 'bed') {
-          return currentSales.map((sale) => sale.id === dailySaleId ? { ...sale, amount: price } : sale);
-        }
-        return [...currentSales, { id: dailySaleId, kind: 'bed', bedId, amount: price, createdAt: now }];
-      });
+      setTransactions((currentTransactions) => [...currentTransactions, {
+        id: createReservationId('transaction'), type: 'bed', amount: price, createdAt: now,
+        resourceId: String(bedId), resourceLabel: `Bed ${bedId}`,
+      }]);
     }
 
     setExtraBeds((currentBeds) => ({
       ...currentBeds,
-      [bedId]: updateBedStatus(currentBeds[bedId], status, { ...details, dailySaleId }),
+      [bedId]: updateBedStatus(currentBeds[bedId], status, details),
     }));
   }
 
@@ -1782,6 +1855,14 @@ function App() {
     const reservation = createBeachReservation({ ...details, surname });
     saveReservationSurname(reservation.surname);
     setBeachReservations((currentReservations) => [reservation, ...currentReservations]);
+    if (reservation.totalAmountPaid !== undefined && reservation.paymentRecordedAt) {
+      const amount = reservation.totalAmountPaid;
+      const createdAt = reservation.paymentRecordedAt;
+      setTransactions((currentTransactions) => [...currentTransactions, {
+        id: createReservationId('transaction'), type: 'beach_reservation', amount, createdAt, resourceId: reservation.id, resourceLabel: reservation.surname,
+        description: formatReservationDates(reservation.startDate, reservation.endDate),
+      }]);
+    }
     setBeachReservationAssignment(setId, reservation);
   }
 
@@ -1806,6 +1887,14 @@ function App() {
     const reservation = createBeachReservation({ ...details, surname });
     saveReservationSurname(reservation.surname);
     setBeachReservations((currentReservations) => [reservation, ...currentReservations]);
+    if (reservation.totalAmountPaid !== undefined && reservation.paymentRecordedAt) {
+      const amount = reservation.totalAmountPaid;
+      const createdAt = reservation.paymentRecordedAt;
+      setTransactions((currentTransactions) => [...currentTransactions, {
+        id: createReservationId('transaction'), type: 'beach_reservation', amount, createdAt, resourceId: reservation.id, resourceLabel: reservation.surname,
+        description: formatReservationDates(reservation.startDate, reservation.endDate),
+      }]);
+    }
     setBedReservationAssignment(bedId, reservation);
   }
 
@@ -1821,6 +1910,14 @@ function App() {
     }
 
     saveReservationSurname(surname);
+    const existing = beachReservations.find((reservation) => reservation.id === reservationId);
+    if (existing?.paymentRecordedAt && getLocalDateKey(new Date(existing.paymentRecordedAt)) === getLocalDateKey()) {
+      setTransactions((currentTransactions) => currentTransactions.map((transaction) =>
+        transaction.type === 'beach_reservation' && transaction.resourceId === reservationId
+          ? { ...transaction, amount: details.totalAmountPaid ?? transaction.amount, resourceLabel: surname, description: formatReservationDates(details.startDate, details.endDate) }
+          : transaction,
+      ));
+    }
     setBeachReservations((currentReservations) =>
       currentReservations.map((reservation) =>
         reservation.id === reservationId
@@ -1855,15 +1952,10 @@ function App() {
       ? currentSales.map((currentSale) => currentSale.id === saleId ? { ...sale, createdAt: currentSale.createdAt } : currentSale)
       : [sale, ...currentSales],
     );
-    setDailySales((currentSales) => {
-      const existing = currentSales.find((currentSale) => currentSale.id === id);
-      if (existing?.kind === 'sunbed') {
-        return currentSales.map((currentSale) => currentSale.id === id
-          ? { ...currentSale, quantity: details.quantity, amount: details.totalAmount }
-          : currentSale,
-        );
-      }
-      return [...currentSales, { id, kind: 'sunbed', sunbedSaleId: id, quantity: details.quantity, amount: details.totalAmount, createdAt: now }];
+    setTransactions((currentTransactions) => {
+      const existing = currentTransactions.find((transaction) => transaction.resourceId === id && transaction.type === 'sunbed');
+      const transaction: Transaction = { id: existing?.id ?? createReservationId('transaction'), type: 'sunbed', amount: details.totalAmount, createdAt: existing?.createdAt ?? now, resourceId: id, resourceLabel: `${details.quantity} sunbeds`, metadata: { quantity: details.quantity } };
+      return existing ? currentTransactions.map((item) => item.id === existing.id ? transaction : item) : [...currentTransactions, transaction];
     });
     closeEditor();
   }
@@ -1873,7 +1965,7 @@ function App() {
       return;
     }
     setSunbedSales((currentSales) => currentSales.filter((sale) => sale.id !== saleId));
-    setDailySales((currentSales) => currentSales.filter((sale) => sale.id !== saleId));
+    setTransactions((currentTransactions) => currentTransactions.filter((transaction) => transaction.resourceId !== saleId));
   }
 
   function saveAquaparkEntry(details: AquaparkEntryDetails) {
@@ -1881,12 +1973,12 @@ function App() {
       (entry) =>
         entry.status === 'active' &&
         !isAquaparkEntryExpired(entry, new Date()) &&
-        entry.wristbands.some((wristband) => details.wristbands.includes(wristband)),
+        entry.wristbands.some((wristband) => !entry.returnedWristbands.includes(wristband) && details.wristbands.includes(wristband)),
     );
 
     if (conflictingEntries.length) {
       const conflictingWristbands = [...new Set(
-        conflictingEntries.flatMap((entry) => entry.wristbands.filter((wristband) => details.wristbands.includes(wristband))),
+        conflictingEntries.flatMap((entry) => entry.wristbands.filter((wristband) => !entry.returnedWristbands.includes(wristband) && details.wristbands.includes(wristband))),
       )].join(', ');
       const confirmed = window.confirm(
         `Wristband ${conflictingWristbands} is already active in the Aquapark tracker. Create another entry anyway?`,
@@ -1899,20 +1991,12 @@ function App() {
 
     const entry = createAquaparkEntry(details);
     setAquaparkEntries((currentEntries) => [entry, ...currentEntries]);
-    setDailySales((currentSales) => [
-      ...currentSales,
-      {
-        id: createReservationId('aquapark-sale'),
-        kind: 'aquapark_entry',
-        entryId: entry.id,
-        ticketType: entry.ticketType,
-        wristbandCount: entry.wristbands.length,
-        unitPrice: entry.unitPrice,
-        customDays: entry.customDays,
-        amount: entry.totalPrice,
-        createdAt: entry.createdAt,
-      },
-    ]);
+    setTransactions((currentTransactions) => [...currentTransactions, {
+      id: createReservationId('transaction'), type: 'aquapark', amount: entry.totalPrice, createdAt: entry.createdAt,
+      resourceId: entry.id, resourceLabel: `Wristbands ${entry.wristbands.join(', ')}`,
+      description: AQUAPARK_TICKETS[entry.ticketType].label,
+      metadata: { ticketType: entry.ticketType, wristbandCount: entry.wristbands.length, unitPrice: entry.unitPrice, customDays: entry.customDays },
+    }]);
     closeEditor();
   }
 
@@ -1926,6 +2010,21 @@ function App() {
         )),
       );
     }
+  }
+
+  function toggleAquaparkWristbandReturn(entryId: string, wristband: number) {
+    setAquaparkEntries((currentEntries) => currentEntries.map((entry) => entry.id !== entryId ? entry : {
+      ...entry,
+      returnedWristbands: entry.returnedWristbands.includes(wristband)
+        ? entry.returnedWristbands.filter((value) => value !== wristband)
+        : [...entry.returnedWristbands, wristband],
+    }));
+  }
+
+  function deleteTransaction(transactionId: string) {
+    const transaction = transactions.find((item) => item.id === transactionId);
+    if (!transaction || !window.confirm(`Delete this ${transaction.type.replace('_', ' ')} transaction for ${formatEuro(transaction.amount)}?`)) return;
+    setTransactions((currentTransactions) => currentTransactions.filter((item) => item.id !== transactionId));
   }
 
   function deleteBeachReservation(reservationId: string) {
@@ -1974,7 +2073,7 @@ function App() {
       savedSurnames,
       sunbedSales,
       aquaparkEntries,
-      dailySales,
+      transactions,
       lastAutomaticResetDate,
     });
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
@@ -2019,7 +2118,7 @@ function App() {
         setSavedSurnames(imported.savedSurnames);
         setSunbedSales(imported.sunbedSales);
         setAquaparkEntries(imported.aquaparkEntries);
-        setDailySales(imported.dailySales);
+        setTransactions(imported.transactions);
         const importedResetDate = imported.lastAutomaticResetDate ?? getLocalDateKey();
         lastAutomaticResetDateRef.current = importedResetDate;
         setLastAutomaticResetDate(importedResetDate);
@@ -2069,7 +2168,7 @@ function App() {
       setSavedSurnames([]);
       setSunbedSales([]);
       setAquaparkEntries([]);
-      setDailySales([]);
+      setTransactions([]);
       const today = getLocalDateKey();
       lastAutomaticResetDateRef.current = today;
       setLastAutomaticResetDate(today);
@@ -2086,6 +2185,9 @@ function App() {
           <h1>Beach Set Manager</h1>
         </div>
         <div className="topbar-actions">
+          <button className="report-button" type="button" onClick={() => selectTab('transactions')}>
+            Transactions
+          </button>
           <button className="report-button" type="button" onClick={() => selectTab('report')}>
             Report
           </button>
@@ -2133,15 +2235,20 @@ function App() {
           currentTime={currentTime}
           onCreateEntry={openNewAquaparkEntry}
           onDeleteEntry={deleteAquaparkEntry}
+          onToggleWristbandReturn={toggleAquaparkWristbandReturn}
         />
+      ) : activeTab === 'transactions' ? (
+        <TransactionsPage transactions={transactions} onDelete={deleteTransaction} />
       ) : activeTab === 'report' ? (
-        <DailyReport sales={dailySales} reservations={beachReservations} />
+        <DailyReport transactions={transactions} />
       ) : (
         <>
           <ActiveReservationsSection
             reservations={beachReservationSummaries}
             onEditReservation={openBeachReservation}
             onDeleteReservation={deleteBeachReservation}
+            collapsed={reservationsCollapsed}
+            onToggleCollapsed={() => setReservationsCollapsed((collapsed) => !collapsed)}
           />
 
           <section className="status-strip" aria-label="Current set totals by status">
@@ -2166,12 +2273,14 @@ function App() {
             sectionRef={beachOneRef}
             sets={sets}
             beachReservations={beachReservations}
+            setRevenue={setRevenue}
             onEditSet={openSetEditor}
           />
           <BeachTwo
             sectionRef={beachTwoRef}
             sets={sets}
             beachReservations={beachReservations}
+            setRevenue={setRevenue}
             onEditSet={openSetEditor}
           />
           <ExtraBedsSection
@@ -2240,11 +2349,13 @@ function BeachOne({
   sectionRef,
   sets,
   beachReservations,
+  setRevenue,
   onEditSet,
 }: {
   sectionRef: MutableRefObject<HTMLElement | null>;
   sets: BeachSetMap;
   beachReservations: BeachReservation[];
+  setRevenue: Record<number, number>;
   onEditSet: (setNumber: number) => void;
 }) {
   return (
@@ -2270,6 +2381,7 @@ function BeachOne({
             sets={BEACH_ONE_UPPER_ROW}
             beachSets={sets}
             beachReservations={beachReservations}
+            setRevenue={setRevenue}
             onEditSet={onEditSet}
           />
           <SetRow
@@ -2277,6 +2389,7 @@ function BeachOne({
             sets={BEACH_ONE_LOWER_ROW}
             beachSets={sets}
             beachReservations={beachReservations}
+            setRevenue={setRevenue}
             onEditSet={onEditSet}
           />
         </div>
@@ -2289,11 +2402,13 @@ function BeachTwo({
   sectionRef,
   sets,
   beachReservations,
+  setRevenue,
   onEditSet,
 }: {
   sectionRef: MutableRefObject<HTMLElement | null>;
   sets: BeachSetMap;
   beachReservations: BeachReservation[];
+  setRevenue: Record<number, number>;
   onEditSet: (setNumber: number) => void;
 }) {
   return (
@@ -2314,6 +2429,7 @@ function BeachTwo({
               key={setNumber}
               beachSet={sets[setNumber]}
               beachReservations={beachReservations}
+              revenue={setRevenue[setNumber]}
               onEdit={onEditSet}
             />
           ))}
@@ -2349,12 +2465,14 @@ function SetRow({
   sets,
   beachSets,
   beachReservations,
+  setRevenue,
   onEditSet,
 }: {
   label: string;
   sets: number[];
   beachSets: BeachSetMap;
   beachReservations: BeachReservation[];
+  setRevenue: Record<number, number>;
   onEditSet: (setNumber: number) => void;
 }) {
   return (
@@ -2366,6 +2484,7 @@ function SetRow({
             key={setNumber}
             beachSet={beachSets[setNumber]}
             beachReservations={beachReservations}
+            revenue={setRevenue[setNumber]}
             onEdit={onEditSet}
           />
         ))}
@@ -2377,10 +2496,12 @@ function SetRow({
 function SetCard({
   beachSet,
   beachReservations,
+  revenue,
   onEdit,
 }: {
   beachSet: BeachSet;
   beachReservations: BeachReservation[];
+  revenue: number;
   onEdit: (setNumber: number) => void;
 }) {
   const longPressTimer = useRef<number | null>(null);
@@ -2414,7 +2535,7 @@ function SetCard({
     >
       <span className="set-number">Set {beachSet.id}</span>
       <SetIcon status={beachSet.status} />
-      <SetDetails beachSet={beachSet} beachReservations={beachReservations} />
+      <SetDetails beachSet={beachSet} beachReservations={beachReservations} revenue={revenue} />
     </button>
   );
 }
@@ -2492,10 +2613,14 @@ function ActiveReservationsSection({
   reservations,
   onEditReservation,
   onDeleteReservation,
+  collapsed,
+  onToggleCollapsed,
 }: {
   reservations: ActiveReservationSummary[];
   onEditReservation: (reservationId: string) => void;
   onDeleteReservation: (reservationId: string) => void;
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
 }) {
   return (
     <section className="active-reservations" aria-labelledby="active-reservations-heading">
@@ -2504,9 +2629,10 @@ function ActiveReservationsSection({
           <p className="eyebrow">Reserved now</p>
           <h2 id="active-reservations-heading">Beach Reservations ({reservations.length})</h2>
         </div>
+        <button type="button" className="active-reservations-toggle" onClick={onToggleCollapsed}>{collapsed ? 'Expand' : 'Collapse'}</button>
       </div>
 
-      {reservations.length ? (
+      {!collapsed && reservations.length ? (
         <div className="active-reservation-list">
           {reservations.map((reservation) => (
             <article className="active-reservation-card" key={reservation.id}>
@@ -2538,9 +2664,9 @@ function ActiveReservationsSection({
             </article>
           ))}
         </div>
-      ) : (
+      ) : !collapsed ? (
         <p className="no-active-reservations">No active reservations.</p>
-      )}
+      ) : null}
     </section>
   );
 }
@@ -2783,13 +2909,25 @@ function AquaparkPage({
   currentTime,
   onCreateEntry,
   onDeleteEntry,
+  onToggleWristbandReturn,
 }: {
   entries: AquaparkEntry[];
   currentTime: Date;
   onCreateEntry: () => void;
   onDeleteEntry: (entryId: string) => void;
+  onToggleWristbandReturn: (entryId: string, wristband: number) => void;
 }) {
-  const activeEntries = entries.filter((entry) => entry.status === 'active');
+  const activeEntries = entries.filter((entry) => entry.status === 'active').sort((first, second) => {
+    const firstOutstanding = first.wristbands.length - first.returnedWristbands.length;
+    const secondOutstanding = second.wristbands.length - second.returnedWristbands.length;
+    if (Boolean(firstOutstanding) !== Boolean(secondOutstanding)) return firstOutstanding ? -1 : 1;
+    const firstExpired = isAquaparkEntryExpired(first, currentTime);
+    const secondExpired = isAquaparkEntryExpired(second, currentTime);
+    if (firstExpired !== secondExpired) return firstExpired ? -1 : 1;
+    const firstEnd = new Date(first.endAt ?? first.validUntil ?? first.startAt).getTime();
+    const secondEnd = new Date(second.endAt ?? second.validUntil ?? second.startAt).getTime();
+    return firstEnd - secondEnd;
+  });
 
   return (
     <section className="aquapark-page" aria-labelledby="aquapark-heading">
@@ -2820,6 +2958,7 @@ function AquaparkPage({
                 entry={entry}
                 expired={isAquaparkEntryExpired(entry, currentTime)}
                 onDelete={onDeleteEntry}
+                onToggleWristbandReturn={onToggleWristbandReturn}
               />
             ))}
           </div>
@@ -2838,10 +2977,12 @@ function AquaparkEntryCard({
   entry,
   expired,
   onDelete,
+  onToggleWristbandReturn,
 }: {
   entry: AquaparkEntry;
   expired: boolean;
   onDelete: (entryId: string) => void;
+  onToggleWristbandReturn: (entryId: string, wristband: number) => void;
 }) {
   const isMultiDay = entry.ticketType === 'one_week' || entry.ticketType === 'custom_days';
   const priceDetail = entry.isLegacyPrice
@@ -2855,7 +2996,9 @@ function AquaparkEntryCard({
       <div className="aquapark-entry-card-main">
         <div>
           <p className="eyebrow">Wristbands</p>
-          <h4>{entry.wristbands.join(', ')}</h4>
+          <div className="wristband-return-list">{entry.wristbands.map((wristband) => (
+            <button type="button" key={wristband} className={entry.returnedWristbands.includes(wristband) ? 'returned-wristband' : ''} onClick={() => onToggleWristbandReturn(entry.id, wristband)} aria-pressed={entry.returnedWristbands.includes(wristband)}>{wristband}</button>
+          ))}</div>
         </div>
         <span className="aquapark-price-badge">Total {formatEuro(entry.totalPrice)}</span>
       </div>
@@ -2880,6 +3023,7 @@ function AquaparkEntryCard({
         </div>
       ) : null}
       {expired ? <p className="aquapark-expired-label">Expired</p> : null}
+      {entry.returnedWristbands.length === entry.wristbands.length ? <p className="aquapark-returned-label">All wristbands returned</p> : null}
       <button type="button" className="aquapark-entry-close" onClick={() => onDelete(entry.id)}>
         Close Entry
       </button>
@@ -2887,53 +3031,36 @@ function AquaparkEntryCard({
   );
 }
 
-function getDailyReport(sales: DailySale[], reservations: BeachReservation[], today = getLocalDateKey()) {
-  const beachSales = sales.filter((sale): sale is Extract<DailySale, { kind: 'beach_set' }> => sale.kind === 'beach_set');
-  const bedSales = sales.filter((sale): sale is Extract<DailySale, { kind: 'bed' }> => sale.kind === 'bed');
-  const sunbedSales = sales.filter((sale): sale is Extract<DailySale, { kind: 'sunbed' }> => sale.kind === 'sunbed');
-  const aquaparkSales = sales.filter((sale): sale is Extract<DailySale, { kind: 'aquapark_entry' }> => sale.kind === 'aquapark_entry');
-  const beachTotal = beachSales.reduce((total, sale) => total + sale.amount, 0);
-  const bedTotal = bedSales.reduce((total, sale) => total + sale.amount, 0);
-  const sunbedTotal = sunbedSales.reduce((total, sale) => total + sale.amount, 0);
-  const reservationPayments = reservations.filter(
-    (reservation) =>
-      reservation.totalAmountPaid !== undefined &&
-      reservation.totalAmountPaid > 0 &&
-      reservation.paymentRecordedAt !== undefined &&
-      getLocalDateKey(new Date(reservation.paymentRecordedAt)) === today,
-  );
-  const reservationTotal = reservationPayments.reduce((total, reservation) => total + (reservation.totalAmountPaid ?? 0), 0);
-  const aquaparkTotal = aquaparkSales.reduce((total, sale) => total + sale.amount, 0);
-  const ticketBreakdown = (Object.keys(AQUAPARK_TICKETS) as AquaparkTicketType[]).map((ticketType) => {
-    const ticketSales = aquaparkSales.filter((sale) => sale.ticketType === ticketType);
-    return {
-      ticketType,
-      wristbandCount: ticketSales.reduce((total, sale) => total + sale.wristbandCount, 0),
-      customDayCount: ticketSales.reduce((total, sale) => total + (sale.customDays ?? 0) * sale.wristbandCount, 0),
-      total: ticketSales.reduce((total, sale) => total + sale.amount, 0),
-    };
-  });
-
-  return {
-    beachSales,
-    bedSales,
-    sunbedSales,
-    reservationPayments,
-    aquaparkSales,
-    beachTotal,
-    bedTotal,
-    sunbedTotal,
-    reservationTotal,
-    aquaparkTotal,
-    total: beachTotal + bedTotal + sunbedTotal + reservationTotal + aquaparkTotal,
-    sunbedQuantity: sunbedSales.reduce((total, sale) => total + sale.quantity, 0),
-    wristbandCount: aquaparkSales.reduce((total, sale) => total + sale.wristbandCount, 0),
-    ticketBreakdown,
-  };
+function getTransactionQuantity(transaction: Transaction): number {
+  return typeof transaction.metadata?.quantity === 'number' ? transaction.metadata.quantity : 0;
 }
 
-function DailyReport({ sales, reservations }: { sales: DailySale[]; reservations: BeachReservation[] }) {
-  const report = useMemo(() => getDailyReport(sales, reservations), [sales, reservations]);
+function getTransactionWristbands(transaction: Transaction): number {
+  return typeof transaction.metadata?.wristbandCount === 'number' ? transaction.metadata.wristbandCount : 0;
+}
+
+function getDailyReport(transactions: Transaction[]) {
+  const forType = (type: TransactionType) => transactions.filter((transaction) => transaction.type === type);
+  const beachSales = forType('beach_set');
+  const bedSales = forType('bed');
+  const sunbedSales = forType('sunbed');
+  const reservationPayments = forType('beach_reservation');
+  const aquaparkSales = forType('aquapark');
+  const totalFor = (items: Transaction[]) => items.reduce((total, item) => total + item.amount, 0);
+  const ticketBreakdown = (Object.keys(AQUAPARK_TICKETS) as AquaparkTicketType[]).map((ticketType) => {
+    const items = aquaparkSales.filter((item) => item.metadata?.ticketType === ticketType);
+    return { ticketType, wristbandCount: items.reduce((total, item) => total + getTransactionWristbands(item), 0), total: totalFor(items) };
+  });
+  const beachTotal = totalFor(beachSales);
+  const bedTotal = totalFor(bedSales);
+  const sunbedTotal = totalFor(sunbedSales);
+  const reservationTotal = totalFor(reservationPayments);
+  const aquaparkTotal = totalFor(aquaparkSales);
+  return { beachSales, bedSales, sunbedSales, reservationPayments, aquaparkSales, beachTotal, bedTotal, sunbedTotal, reservationTotal, aquaparkTotal, total: beachTotal + bedTotal + sunbedTotal + reservationTotal + aquaparkTotal, sunbedQuantity: sunbedSales.reduce((total, sale) => total + getTransactionQuantity(sale), 0), wristbandCount: aquaparkSales.reduce((total, sale) => total + getTransactionWristbands(sale), 0), ticketBreakdown };
+}
+
+function DailyReport({ transactions }: { transactions: Transaction[] }) {
+  const report = useMemo(() => getDailyReport(transactions), [transactions]);
   const today = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date());
 
   return (
@@ -2966,7 +3093,7 @@ function DailyReport({ sales, reservations }: { sales: DailySale[]; reservations
         {report.beachSales.length ? (
           <div className="report-list">
             {report.beachSales.map((sale) => (
-              <p key={sale.id}><span>Set {sale.setId}</span><strong>{formatEuro(sale.amount)}</strong></p>
+              <p key={sale.id}><span>{sale.resourceLabel}</span><strong>{formatEuro(sale.amount)}</strong></p>
             ))}
           </div>
         ) : <p className="report-empty">No current-day numbered set sales recorded.</p>}
@@ -2982,10 +3109,10 @@ function DailyReport({ sales, reservations }: { sales: DailySale[]; reservations
         </div>
         {report.reservationPayments.length ? (
           <div className="report-list">
-            {report.reservationPayments.map((reservation) => (
-              <p key={reservation.id}>
-                <span>{reservation.surname}<small>{formatReservationDates(reservation.startDate, reservation.endDate)}</small></span>
-                <strong>{formatEuro(reservation.totalAmountPaid ?? 0)}</strong>
+            {report.reservationPayments.map((payment) => (
+              <p key={payment.id}>
+                <span>{payment.resourceLabel}<small>{payment.description}</small></span>
+                <strong>{formatEuro(payment.amount)}</strong>
               </p>
             ))}
           </div>
@@ -3003,7 +3130,7 @@ function DailyReport({ sales, reservations }: { sales: DailySale[]; reservations
         {report.bedSales.length ? (
           <div className="report-list">
             {report.bedSales.map((sale) => (
-              <p key={sale.id}><span>Bed {sale.bedId}</span><strong>{formatEuro(sale.amount)}</strong></p>
+              <p key={sale.id}><span>{sale.resourceLabel}</span><strong>{formatEuro(sale.amount)}</strong></p>
             ))}
           </div>
         ) : <p className="report-empty">No current-day Bed sales recorded.</p>}
@@ -3020,7 +3147,7 @@ function DailyReport({ sales, reservations }: { sales: DailySale[]; reservations
         {report.sunbedSales.length ? (
           <div className="report-list">
             {report.sunbedSales.map((sale) => (
-              <p key={sale.id}><span>{sale.quantity} sunbeds</span><strong>{formatEuro(sale.amount)}</strong></p>
+              <p key={sale.id}><span>{sale.resourceLabel}</span><strong>{formatEuro(sale.amount)}</strong></p>
             ))}
           </div>
         ) : <p className="report-empty">No current-day non-numbered Sunbed sales recorded.</p>}
@@ -3040,7 +3167,7 @@ function DailyReport({ sales, reservations }: { sales: DailySale[]; reservations
               <span>
                 {AQUAPARK_TICKETS[ticket.ticketType].label}
                 <small>
-                  {ticket.wristbandCount} wristbands{ticket.ticketType === 'custom_days' && ticket.customDayCount ? `, ${ticket.customDayCount} wristband-days` : ''}
+                  {ticket.wristbandCount} wristbands
                 </small>
               </span>
               <strong>{formatEuro(ticket.total)}</strong>
@@ -3050,6 +3177,19 @@ function DailyReport({ sales, reservations }: { sales: DailySale[]; reservations
       </section>
     </section>
   );
+}
+
+function TransactionsPage({ transactions, onDelete }: { transactions: Transaction[]; onDelete: (transactionId: string) => void }) {
+  const sorted = [...transactions].sort((first, second) => new Date(second.createdAt).getTime() - new Date(first.createdAt).getTime());
+  const labels: Record<TransactionType, string> = { beach_set: 'Beach Set', bed: 'Bed', sunbed: 'Non-numbered Sunbeds', beach_reservation: 'Beach Reservation', aquapark: 'Aquapark' };
+  return <section className="transactions-page" aria-labelledby="transactions-heading">
+    <header className="report-hero"><p className="eyebrow">Current-day recorded sales</p><h2 id="transactions-heading">Transactions</h2><p>{sorted.length} transactions, newest first</p></header>
+    <div className="transactions-list">{sorted.length ? sorted.map((transaction) => <article className="transaction-card" key={transaction.id}>
+      <div><p className="eyebrow">{formatTime(transaction.createdAt)} · {labels[transaction.type]}</p><strong>{transaction.resourceLabel || labels[transaction.type]}</strong>{transaction.description ? <small>{transaction.description}</small> : null}</div>
+      <strong className="transaction-amount">{formatEuro(transaction.amount)}</strong>
+      <button type="button" className="transaction-delete" onClick={() => onDelete(transaction.id)}>Delete Transaction</button>
+    </article>) : <p className="report-empty">No transactions recorded today.</p>}</div>
+  </section>;
 }
 
 function BottomTabs({
@@ -3087,15 +3227,18 @@ function BottomTabs({
 function SetDetails({
   beachSet,
   beachReservations,
+  revenue,
 }: {
   beachSet: BeachSet;
   beachReservations: BeachReservation[];
+  revenue: number;
 }) {
   if (beachSet.status === 'paid') {
     return (
       <span className="card-detail">
         <strong>Paid</strong>
         <small>{beachSet.price ? formatEuro(beachSet.price) : '2 beds + parasol'}</small>
+        {revenue > 0 ? <small>Today: {formatEuro(revenue)}</small> : null}
       </span>
     );
   }
@@ -3112,11 +3255,11 @@ function SetDetails({
     );
   }
 
-  if (beachSet.status === 'partial') {
+  if (beachSet.status === 'left') {
     return (
       <span className="card-detail">
-        <strong>Partial</strong>
-        <small>{beachSet.partialNote || 'Add note'}</small>
+        <strong>Left</strong>
+        <small>{revenue > 0 ? `Today: ${formatEuro(revenue)}` : 'Available to sell again'}</small>
       </span>
     );
   }
@@ -3124,7 +3267,7 @@ function SetDetails({
   return (
     <span className="card-detail">
       <strong>Free</strong>
-      <small>Available</small>
+      <small>{revenue > 0 ? `Today: ${formatEuro(revenue)}` : 'Available'}</small>
     </span>
   );
 }
@@ -3380,7 +3523,6 @@ function SetEditorModal({
   onCreateReservation: (details: BeachReservationDetails) => void;
 }) {
   const [mode, setMode] = useState<DetailMode>('actions');
-  const [partialNote, setPartialNote] = useState(set.partialNote ?? PARTIAL_OPTIONS[0]);
   const [fixedTotal, setFixedTotal] = useState(set.priceMode === 'fixed' ? set.price ?? 0 : 0);
   const [priceMode, setPriceMode] = useState<SetPriceMode>(set.priceMode ?? 'fixed');
   const [specialPrice, setSpecialPrice] = useState(set.priceMode === 'special' && set.price ? String(set.price) : '');
@@ -3390,12 +3532,6 @@ function SetEditorModal({
   function saveAndClose(status: SetStatus, details?: Partial<BeachSet>) {
     onSave(status, details);
     onClose();
-  }
-
-  function savePartial() {
-    saveAndClose('partial', {
-      partialNote: partialNote.trim() || 'Partial payment',
-    });
   }
 
   function savePaid() {
@@ -3441,8 +3577,8 @@ function SetEditorModal({
           <button type="button" className="sheet-button reserved-action" onClick={() => setMode('reserved')}>
             Mark Reserved
           </button>
-          <button type="button" className="sheet-button partial-action" onClick={() => setMode('partial')}>
-            Mark Partial Payment
+          <button type="button" className="sheet-button left-action" onClick={() => saveAndClose('left')}>
+            Mark Left
           </button>
         </div>
 
@@ -3518,35 +3654,6 @@ function SetEditorModal({
             onAssignReservation={onAssignReservation}
             onCreateReservation={onCreateReservation}
           />
-        ) : null}
-
-        {mode === 'partial' ? (
-          <div className="detail-panel">
-            <div className="quick-options" aria-label="Partial payment quick options">
-              {PARTIAL_OPTIONS.map((option) => (
-                <button
-                  type="button"
-                  className={partialNote === option ? 'quick-option selected' : 'quick-option'}
-                  key={option}
-                  onClick={() => setPartialNote(option)}
-                >
-                  {option}
-                </button>
-              ))}
-            </div>
-            <label>
-              Custom note
-              <textarea
-                value={partialNote}
-                onChange={(event) => setPartialNote(event.target.value)}
-                rows={3}
-                placeholder="Write what was paid"
-              />
-            </label>
-            <button type="button" className="sheet-button partial-action" onClick={savePartial}>
-              Save Partial Payment
-            </button>
-          </div>
         ) : null}
 
         <button type="button" className="cancel-button" onClick={onClose}>

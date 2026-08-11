@@ -74,6 +74,17 @@ h2 {
   background: #e5f8fb;
 }
 
+.active-reservations-toggle,
+.transaction-delete {
+  min-height: 40px;
+  padding: 0 10px;
+  color: #1f5fad;
+  font-weight: 900;
+  border: 1px solid rgba(31, 95, 173, 0.28);
+  border-radius: 8px;
+  background: #edf5ff;
+}
+
 .reset-button:active,
 .set-card:active,
 .bed-card:active {
@@ -753,14 +764,14 @@ h2 {
   box-shadow: 0 0 0 1px rgba(12, 79, 168, 0.16), 0 4px 10px rgba(42, 56, 67, 0.08);
 }
 
-.status-partial {
-  color: #a64700;
+.status-left {
+  color: #6c4556;
 }
 
-.set-card.status-partial {
-  border-color: rgba(166, 71, 0, 0.76);
-  background: #ffd98a;
-  box-shadow: 0 0 0 1px rgba(166, 71, 0, 0.2), 0 4px 10px rgba(42, 56, 67, 0.08);
+.set-card.status-left {
+  border-color: rgba(108, 69, 86, 0.66);
+  background: #eadde2;
+  box-shadow: 0 0 0 1px rgba(108, 69, 86, 0.16), 0 4px 10px rgba(42, 56, 67, 0.08);
 }
 
 .bed-status-strip {
@@ -873,6 +884,80 @@ h2 {
   font-size: 1.15rem;
   line-height: 1.25;
   overflow-wrap: anywhere;
+}
+
+.wristband-return-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.wristband-return-list button {
+  min-height: 34px;
+  min-width: 38px;
+  padding: 0 8px;
+  color: #124855;
+  font-weight: 900;
+  border: 1px solid rgba(18, 132, 150, 0.26);
+  border-radius: 7px;
+  background: #ffffff;
+}
+
+.wristband-return-list .returned-wristband {
+  color: #7f8d96;
+  text-decoration: line-through;
+  background: #e7edef;
+}
+
+.aquapark-returned-label {
+  margin: 0;
+  padding: 8px 10px;
+  color: #53636f;
+  font-size: 0.8rem;
+  font-weight: 900;
+  border-radius: 7px;
+  background: #e7edef;
+}
+
+.transactions-page,
+.transactions-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.transaction-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid rgba(23, 32, 42, 0.12);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 8px 22px rgba(42, 56, 67, 0.08);
+}
+
+.transaction-card strong,
+.transaction-card small {
+  display: block;
+}
+
+.transaction-card small {
+  margin-top: 3px;
+  color: #53636f;
+  font-weight: 700;
+}
+
+.transaction-amount {
+  color: #087e73;
+  font-size: 1.04rem;
+}
+
+.transaction-delete {
+  grid-column: 1 / -1;
+  color: #b7334b;
+  border-color: rgba(183, 51, 75, 0.28);
+  background: #fff5f6;
 }
 
 .aquapark-price-badge {
@@ -1664,6 +1749,26 @@ h2 {
 
 .active-reservation-paid {
   color: #006d4f;
+}
+
+@media (max-width: 520px) {
+  .topbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .topbar-actions {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .topbar-actions .report-button,
+  .topbar-actions .reset-button {
+    min-width: 0;
+    padding: 0 6px;
+    font-size: 0.69rem;
+  }
 }
 
 @media (min-width: 640px) {
