@@ -3925,7 +3925,7 @@ function SunbedSaleModal({
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
-      <section className="action-sheet" role="dialog" aria-modal="true" aria-labelledby="sunbed-sale-title" onMouseDown={(event) => event.stopPropagation()}>
+      <section className="action-sheet sunbed-sale-sheet" role="dialog" aria-modal="true" aria-labelledby="sunbed-sale-title" onMouseDown={(event) => event.stopPropagation()}>
         <div className="sheet-handle" aria-hidden="true" />
         <header className="sheet-header">
           <div>
@@ -3934,7 +3934,7 @@ function SunbedSaleModal({
           </div>
           <button type="button" className="close-button" onClick={onClose}>Close</button>
         </header>
-        <div className="detail-panel">
+        <div className="detail-panel sunbed-sale-form-body">
           <label>
             Quantity sold
             <input type="number" inputMode="numeric" min="1" step="1" value={quantity} onChange={(event) => setQuantity(event.target.value)} />
@@ -3947,13 +3947,15 @@ function SunbedSaleModal({
             Description
             <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} placeholder="Optional description / notes" />
           </label>
+        </div>
+        <div className="sunbed-sale-actions">
           <button type="button" className="sheet-button sunbeds-primary-button" disabled={!canSave} onClick={() => {
             if (canSave && parsedAmount !== null) onSave({ quantity: parsedQuantity, totalAmount: parsedAmount, description: description.trim() || undefined });
           }}>
             Save Sunbed Sale
           </button>
+          <button type="button" className="cancel-button" onClick={onClose}>Cancel</button>
         </div>
-        <button type="button" className="cancel-button" onClick={onClose}>Cancel</button>
       </section>
     </div>
   );

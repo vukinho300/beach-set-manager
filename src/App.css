@@ -3538,6 +3538,29 @@ h4 {
   background: #fff0f2;
 }
 
+/* Keep the Sunbed form actions inside the visible mobile viewport above the keyboard. */
+.sunbed-sale-sheet {
+  max-height: calc(100dvh - 16px);
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  overflow: hidden;
+}
+
+.sunbed-sale-form-body {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: 10px;
+}
+
+.sunbed-sale-actions {
+  display: grid;
+  gap: 7px;
+  padding-top: 10px;
+  border-top: 1px solid var(--cs-border);
+  background: var(--cs-surface);
+}
+
 .aquapark-entry-list {
   gap: var(--cs-space-2);
 }
