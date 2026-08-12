@@ -133,6 +133,8 @@ type Transaction = {
   type: TransactionType;
   amount: number;
   createdAt: string;
+  status?: 'active' | 'deleted';
+  deletedAt?: string;
   resourceId?: string;
   resourceLabel?: string;
   description?: string;
@@ -851,12 +853,18 @@ function normalizeImportedTransaction(value: unknown): Transaction | null {
   const type: TransactionType | undefined = ['beach_set', 'bed', 'sunbed', 'beach_reservation', 'aquapark'].includes(candidate.type as string)
     ? candidate.type as TransactionType
     : undefined;
+  const status = candidate.status === 'deleted' ? 'deleted' : 'active';
+  const deletedAt = typeof candidate.deletedAt === 'string' && !Number.isNaN(new Date(candidate.deletedAt).getTime())
+    ? candidate.deletedAt
+    : undefined;
   if (!id || !amount || !createdAt || !type) return null;
   return {
     id,
     type,
     amount,
     createdAt,
+    status,
+    deletedAt: status === 'deleted' ? deletedAt ?? createdAt : undefined,
     resourceId: typeof candidate.resourceId === 'string' ? candidate.resourceId : undefined,
     resourceLabel: typeof candidate.resourceLabel === 'string' ? candidate.resourceLabel : undefined,
     description: typeof candidate.description === 'string' ? candidate.description : undefined,
@@ -865,12 +873,18 @@ function normalizeImportedTransaction(value: unknown): Transaction | null {
 }
 
 function parseTransactions(value: unknown, legacySales?: unknown): Transaction[] {
-  const rawTransactions = Array.isArray(value) ? value : [];
+  const hasModernTransactionLedger = Array.isArray(value);
+  const rawTransactions = hasModernTransactionLedger ? value : [];
   const transactions = rawTransactions.reduce<Transaction[]>((items, raw) => {
     const transaction = normalizeImportedTransaction(raw);
     return transaction && !items.some((item) => item.id === transaction.id) ? [...items, transaction] : items;
   }, []);
-  return transactions.length || !legacySales ? transactions : parseDailySales(legacySales).map(legacySaleToTransaction);
+  // Only use dailySales for genuinely old data. An empty modern ledger is valid after sales were deleted.
+  return hasModernTransactionLedger || !legacySales ? transactions : parseDailySales(legacySales).map(legacySaleToTransaction);
+}
+
+function isActiveTransaction(transaction: Transaction) {
+  return transaction.status !== 'deleted';
 }
 
 function addKnownReservationPaymentTransactions(transactions: Transaction[], reservations: BeachReservation[]): Transaction[] {
@@ -1394,6 +1408,17 @@ function formatTime(value: string): string {
   return new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value));
 }
 
+function formatAuditTimestamp(value: string): string {
+  return new Intl.DateTimeFormat(undefined, {
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(new Date(value));
+}
+
 function parseWristbandNumbers(value: string): { wristbands: number[]; error?: string } {
   const parts = value.trim().split(/[\s,]+/).filter(Boolean);
 
@@ -1568,6 +1593,11 @@ function App() {
   }, [reservationsCollapsed]);
 
   useEffect(() => {
+    // Installed PWAs may honor this lock; browsers that do not retain the compact portrait CSS layout.
+    void window.screen.orientation?.lock?.('portrait').catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
     const timer = window.setInterval(() => setCurrentTime(new Date()), 60_000);
     return () => window.clearInterval(timer);
   }, []);
@@ -1587,7 +1617,7 @@ function App() {
     [beachReservations, sets, extraBeds],
   );
   const setRevenue = useMemo(() => Object.fromEntries(
-    Object.values(sets).map((set) => [set.id, transactions.filter((transaction) => transaction.type === 'beach_set' && transaction.resourceId === String(set.id)).reduce((total, transaction) => total + transaction.amount, 0)]),
+    Object.values(sets).map((set) => [set.id, transactions.filter((transaction) => isActiveTransaction(transaction) && transaction.type === 'beach_set' && transaction.resourceId === String(set.id)).reduce((total, transaction) => total + transaction.amount, 0)]),
   ) as Record<number, number>, [sets, transactions]);
 
   const activeSet = activeEditor?.kind === 'set' ? sets[activeEditor.id] : null;
@@ -1717,33 +1747,43 @@ function App() {
 
   function saveSet(setId: number, status: SetStatus, details?: Partial<BeachSet>) {
     const price = status === 'paid' ? normalizePositiveMoney(details?.price) : undefined;
-    if (status === 'paid' && price) {
-      const now = new Date().toISOString();
-      setTransactions((currentTransactions) => [...currentTransactions, {
-        id: createReservationId('transaction'), type: 'beach_set', amount: price, createdAt: now,
-        resourceId: String(setId), resourceLabel: `Set ${setId}`,
-      }]);
+    const transaction = price ? {
+      id: createReservationId('transaction'), type: 'beach_set' as const, amount: price, createdAt: new Date().toISOString(),
+      resourceId: String(setId), resourceLabel: `Set ${setId}`,
+    } : undefined;
+
+    if (transaction) {
+      setTransactions((currentTransactions) => [...currentTransactions, transaction]);
     }
 
     setSets((currentSets) => ({
       ...currentSets,
-      [setId]: updateSetStatus(currentSets[setId], status, details),
+      [setId]: updateSetStatus(
+        currentSets[setId],
+        status,
+        transaction ? { ...details, dailySaleId: transaction.id } : details,
+      ),
     }));
   }
 
   function saveBed(bedId: BedId, status: BedStatus, details?: Partial<ExtraBed>) {
     const price = status === 'paid' ? normalizePositiveMoney(details?.price) : undefined;
-    if (status === 'paid' && price) {
-      const now = new Date().toISOString();
-      setTransactions((currentTransactions) => [...currentTransactions, {
-        id: createReservationId('transaction'), type: 'bed', amount: price, createdAt: now,
-        resourceId: String(bedId), resourceLabel: `Bed ${bedId}`,
-      }]);
+    const transaction = price ? {
+      id: createReservationId('transaction'), type: 'bed' as const, amount: price, createdAt: new Date().toISOString(),
+      resourceId: String(bedId), resourceLabel: `Bed ${bedId}`,
+    } : undefined;
+
+    if (transaction) {
+      setTransactions((currentTransactions) => [...currentTransactions, transaction]);
     }
 
     setExtraBeds((currentBeds) => ({
       ...currentBeds,
-      [bedId]: updateBedStatus(currentBeds[bedId], status, details),
+      [bedId]: updateBedStatus(
+        currentBeds[bedId],
+        status,
+        transaction ? { ...details, dailySaleId: transaction.id } : details,
+      ),
     }));
   }
 
@@ -1957,7 +1997,7 @@ function App() {
       : [sale, ...currentSales],
     );
     setTransactions((currentTransactions) => {
-      const existing = currentTransactions.find((transaction) => transaction.resourceId === id && transaction.type === 'sunbed');
+      const existing = currentTransactions.find((transaction) => isActiveTransaction(transaction) && transaction.resourceId === id && transaction.type === 'sunbed');
       const transaction: Transaction = { id: existing?.id ?? createReservationId('transaction'), type: 'sunbed', amount: details.totalAmount, createdAt: existing?.createdAt ?? now, resourceId: id, resourceLabel: `${details.quantity} sunbeds`, metadata: { quantity: details.quantity } };
       return existing ? currentTransactions.map((item) => item.id === existing.id ? transaction : item) : [...currentTransactions, transaction];
     });
@@ -1969,7 +2009,12 @@ function App() {
       return;
     }
     setSunbedSales((currentSales) => currentSales.filter((sale) => sale.id !== saleId));
-    setTransactions((currentTransactions) => currentTransactions.filter((transaction) => transaction.resourceId !== saleId));
+    const deletedAt = new Date().toISOString();
+    setTransactions((currentTransactions) => currentTransactions.map((transaction) =>
+      transaction.type === 'sunbed' && transaction.resourceId === saleId && isActiveTransaction(transaction)
+        ? { ...transaction, status: 'deleted', deletedAt }
+        : transaction,
+    ));
   }
 
   function saveAquaparkEntry(details: AquaparkEntryDetails) {
@@ -2016,27 +2061,7 @@ function App() {
     }));
   }
 
-  function deleteTransaction(transactionId: string) {
-    const transaction = transactions.find((item) => item.id === transactionId);
-    if (!transaction || !window.confirm(`Delete this ${transaction.type.replace('_', ' ')} transaction for ${formatEuro(transaction.amount)}?`)) return;
-    setTransactions((currentTransactions) => currentTransactions.filter((item) => item.id !== transactionId));
-  }
-
-  function deleteBeachReservation(reservationId: string) {
-    const reservation = beachReservations.find((candidate) => candidate.id === reservationId);
-
-    if (!reservation) {
-      return;
-    }
-
-    const confirmed = window.confirm(
-      `Delete reservation for ${reservation.surname}? This will also remove it from any assigned sets or beds.`,
-    );
-
-    if (!confirmed) {
-      return;
-    }
-
+  function removeBeachReservationAndAssignments(reservationId: string) {
     setBeachReservations((currentReservations) =>
       currentReservations.filter((candidate) => candidate.id !== reservationId),
     );
@@ -2056,6 +2081,90 @@ function App() {
         ]),
       ) as ExtraBedMap,
     );
+  }
+
+  function isLatestTransactionForResource(transaction: Transaction) {
+    return transactions
+      .filter((item) => isActiveTransaction(item) && item.type === transaction.type && item.resourceId === transaction.resourceId)
+      .sort((first, second) => new Date(second.createdAt).getTime() - new Date(first.createdAt).getTime())[0]?.id === transaction.id;
+  }
+
+  function deleteTransaction(transactionId: string) {
+    const transaction = transactions.find((item) => item.id === transactionId);
+    if (!transaction) return;
+
+    const reservation = transaction.type === 'beach_reservation'
+      ? beachReservations.find((item) => item.id === transaction.resourceId)
+      : undefined;
+    const confirmationMessage = reservation
+      ? `Delete reservation for ${reservation.surname}? This will also remove it from any assigned sets or beds.`
+      : `Delete this ${transaction.type.replace('_', ' ')} transaction for ${formatEuro(transaction.amount)}?`;
+
+    if (!window.confirm(confirmationMessage)) return;
+
+    if (transaction.type === 'beach_set') {
+      const setId = Number(transaction.resourceId);
+      if (Number.isInteger(setId) && sets[setId]) {
+        const isLegacyCurrentSale = !sets[setId].dailySaleId &&
+          sets[setId].price === transaction.amount &&
+          isLatestTransactionForResource(transaction);
+        if (sets[setId].dailySaleId === transaction.id || isLegacyCurrentSale) {
+          setSets((currentSets) => ({
+            ...currentSets,
+            [setId]: updateSetStatus(currentSets[setId], 'free'),
+          }));
+        }
+      }
+    } else if (transaction.type === 'bed') {
+      const bedId = Number(transaction.resourceId) as BedId;
+      if (EXTRA_BED_IDS.includes(bedId)) {
+        const bed = extraBeds[bedId];
+        const isLegacyCurrentSale = !bed.dailySaleId &&
+          bed.price === transaction.amount &&
+          isLatestTransactionForResource(transaction);
+        if (bed.dailySaleId === transaction.id || isLegacyCurrentSale) {
+          setExtraBeds((currentBeds) => ({
+            ...currentBeds,
+            [bedId]: updateBedStatus(currentBeds[bedId], 'free'),
+          }));
+        }
+      }
+    } else if (transaction.type === 'sunbed' && transaction.resourceId) {
+      setSunbedSales((currentSales) => currentSales.filter((sale) => sale.id !== transaction.resourceId));
+    } else if (transaction.type === 'aquapark' && transaction.resourceId) {
+      setAquaparkEntries((currentEntries) => currentEntries.filter((entry) => entry.id !== transaction.resourceId));
+    } else if (transaction.type === 'beach_reservation' && transaction.resourceId) {
+      removeBeachReservationAndAssignments(transaction.resourceId);
+    }
+
+    const deletedAt = new Date().toISOString();
+    setTransactions((currentTransactions) => currentTransactions.map((item) =>
+      item.id === transactionId ? { ...item, status: 'deleted', deletedAt } : item,
+    ));
+  }
+
+  function deleteBeachReservation(reservationId: string) {
+    const reservation = beachReservations.find((candidate) => candidate.id === reservationId);
+
+    if (!reservation) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Delete reservation for ${reservation.surname}? This will also remove it from any assigned sets or beds.`,
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    removeBeachReservationAndAssignments(reservationId);
+    const deletedAt = new Date().toISOString();
+    setTransactions((currentTransactions) => currentTransactions.map((transaction) =>
+      transaction.type === 'beach_reservation' && transaction.resourceId === reservationId && isActiveTransaction(transaction)
+        ? { ...transaction, status: 'deleted', deletedAt }
+        : transaction,
+    ));
     closeEditor();
   }
 
@@ -3023,7 +3132,7 @@ function getTransactionWristbands(transaction: Transaction): number {
 }
 
 function getDailyReport(transactions: Transaction[]) {
-  const forType = (type: TransactionType) => transactions.filter((transaction) => transaction.type === type);
+  const forType = (type: TransactionType) => transactions.filter((transaction) => isActiveTransaction(transaction) && transaction.type === type);
   const beachSales = forType('beach_set');
   const bedSales = forType('bed');
   const sunbedSales = forType('sunbed');
@@ -3165,12 +3274,15 @@ function DailyReport({ transactions }: { transactions: Transaction[] }) {
 function TransactionsPage({ transactions, onDelete }: { transactions: Transaction[]; onDelete: (transactionId: string) => void }) {
   const sorted = [...transactions].sort((first, second) => new Date(second.createdAt).getTime() - new Date(first.createdAt).getTime());
   const labels: Record<TransactionType, string> = { beach_set: 'Beach Set', bed: 'Bed', sunbed: 'Non-numbered Sunbeds', beach_reservation: 'Beach Reservation', aquapark: 'Aquapark' };
+  const activeCount = sorted.filter(isActiveTransaction).length;
+  const deletedCount = sorted.length - activeCount;
   return <section className="transactions-page" aria-labelledby="transactions-heading">
-    <header className="report-hero"><p className="eyebrow">Current-day recorded sales</p><h2 id="transactions-heading">Transactions</h2><p>{sorted.length} transactions, newest first</p></header>
-    <div className="transactions-list">{sorted.length ? sorted.map((transaction) => <article className="transaction-card" key={transaction.id}>
+    <header className="report-hero"><p className="eyebrow">Current-day recorded sales</p><h2 id="transactions-heading">Transactions</h2><p>{activeCount} active{deletedCount ? ` / ${deletedCount} deleted` : ''}, newest first</p></header>
+    <div className="transactions-list">{sorted.length ? sorted.map((transaction) => <article className={`transaction-card${isActiveTransaction(transaction) ? '' : ' transaction-card-deleted'}`} key={transaction.id}>
       <div><p className="eyebrow">{formatTime(transaction.createdAt)} · {labels[transaction.type]}</p><strong>{transaction.resourceLabel || labels[transaction.type]}</strong>{transaction.description ? <small>{transaction.description}</small> : null}</div>
+      {!isActiveTransaction(transaction) && transaction.deletedAt ? <p className="transaction-deleted-at"><span className="transaction-deleted-badge">Deleted</span> {formatAuditTimestamp(transaction.deletedAt)}</p> : null}
       <strong className="transaction-amount">{formatEuro(transaction.amount)}</strong>
-      <button type="button" className="transaction-delete" onClick={() => onDelete(transaction.id)}>Delete Transaction</button>
+      {isActiveTransaction(transaction) ? <button type="button" className="transaction-delete" onClick={() => onDelete(transaction.id)}>Delete Transaction</button> : null}
     </article>) : <p className="report-empty">No transactions recorded today.</p>}</div>
   </section>;
 }

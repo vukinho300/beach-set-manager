@@ -1,3 +1,7 @@
+html {
+  touch-action: manipulation;
+}
+
 .app-shell {
   width: min(100%, 760px);
   min-height: 100vh;
@@ -3500,6 +3504,40 @@ h4 {
   font-weight: 780;
 }
 
+.transaction-card-deleted {
+  background: #f5f6f7;
+}
+
+.transaction-card-deleted > div > strong,
+.transaction-card-deleted .transaction-amount {
+  color: var(--cs-text-secondary);
+  text-decoration: line-through;
+}
+
+.transaction-deleted-at {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #8e1027;
+  font-size: 0.75rem;
+  font-weight: 750;
+}
+
+.transaction-deleted-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  margin-right: 5px;
+  padding: 0 6px;
+  color: #8e1027;
+  font-size: 0.62rem;
+  font-weight: 850;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid #d98b99;
+  border-radius: 4px;
+  background: #fff0f2;
+}
+
 .aquapark-entry-list {
   gap: var(--cs-space-2);
 }
@@ -4244,5 +4282,25 @@ button.existing-reservation-option {
   color: var(--cs-blue);
   outline: 0;
   background: var(--cs-surface-blue);
+}
+
+/* Preserve the compact portrait controls if a browser still permits landscape rotation. */
+@media (orientation: landscape) and (max-width: 900px) {
+  .top-navigation {
+    gap: 6px;
+    padding-block: 6px;
+  }
+
+  .top-navigation-button {
+    min-height: 38px;
+  }
+
+  .page-content {
+    padding-top: 100px;
+  }
+
+  .beach-shortcuts button {
+    min-height: 42px;
+  }
 }
 /* PETALON VISUAL-QA REFINEMENTS END */
