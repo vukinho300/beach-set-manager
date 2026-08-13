@@ -19,7 +19,7 @@ The current application is a polished single-browser React/Vite/TypeScript PWA. 
 1. [[01_Main_Plan]]
 2. [[02_Project_Boundaries_and_AI_Roles]]
 3. [[03_Current_Architecture_and_Repository_State]]
-4. [[04_Data_Model_and_Realtime_Sync]]
+4. [[04|Shared Architecture]]
 5. [[05_Authentication_Authorization_and_Security]]
 6. [[06_Licensing_White_Label_and_Seasonality]]
 7. [[07_Offline_Sync_and_Conflict_Resolution]]
