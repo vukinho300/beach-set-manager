@@ -141,6 +141,12 @@ type Transaction = {
   metadata?: Record<string, unknown>;
 };
 
+type ArchivedDailyReport = {
+  date: string;
+  archivedAt: string;
+  transactions: Transaction[];
+};
+
 type AquaparkEntryDetails = {
   wristbands: number[];
   ticketType: AquaparkTicketType;
@@ -183,11 +189,12 @@ type AppData = {
   sunbedSales: NonNumberedSunbedSale[];
   aquaparkEntries: AquaparkEntry[];
   transactions: Transaction[];
+  reportArchive: ArchivedDailyReport[];
   lastAutomaticResetDate?: string;
 };
 type BackupPayload = AppData & {
   app: 'Beach Set Manager';
-  version: 11;
+  version: 12;
   exportedAt: string;
 };
 
@@ -261,6 +268,7 @@ function createFreeAppData(): AppData {
     sunbedSales: [],
     aquaparkEntries: [],
     transactions: [],
+    reportArchive: [],
     lastAutomaticResetDate: getLocalDateKey(),
   };
 }
@@ -346,6 +354,11 @@ function getInclusiveDateDays(startDate: string, endDate: string): number {
   const start = Date.UTC(startYear, startMonth - 1, startDay);
   const end = Date.UTC(endYear, endMonth - 1, endDay);
   return Math.floor((end - start) / 86_400_000) + 1;
+}
+
+function getReservationDaysLeft(startDate: string, endDate: string, today = getLocalDateKey()): number {
+  const effectiveStartDate = today > startDate ? today : startDate;
+  return getInclusiveDateDays(effectiveStartDate, endDate);
 }
 
 function formatReservationDates(startDate: string, endDate: string): string {
@@ -887,6 +900,40 @@ function isActiveTransaction(transaction: Transaction) {
   return transaction.status !== 'deleted';
 }
 
+function parseReportArchive(value: unknown): ArchivedDailyReport[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.reduce<ArchivedDailyReport[]>((reports, rawReport) => {
+    if (!rawReport || typeof rawReport !== 'object') return reports;
+    const candidate = rawReport as Partial<ArchivedDailyReport>;
+    const date = isLocalDateKey(candidate.date) ? candidate.date : undefined;
+    const archivedAt = typeof candidate.archivedAt === 'string' && !Number.isNaN(new Date(candidate.archivedAt).getTime())
+      ? candidate.archivedAt
+      : undefined;
+    if (!date || !archivedAt || reports.some((report) => report.date === date)) return reports;
+
+    const transactions = parseTransactions(candidate.transactions);
+    return [...reports, { date, archivedAt, transactions }];
+  }, []).sort((first, second) => second.date.localeCompare(first.date));
+}
+
+function archiveTransactionsForDate(
+  archive: ArchivedDailyReport[],
+  date: string | undefined,
+  transactions: Transaction[],
+): ArchivedDailyReport[] {
+  if (!date || !isLocalDateKey(date) || archive.some((report) => report.date === date)) return archive;
+
+  const report: ArchivedDailyReport = {
+    date,
+    archivedAt: new Date().toISOString(),
+    transactions: transactions.map((transaction) => ({ ...transaction })),
+  };
+
+  return [report, ...archive]
+    .sort((first, second) => second.date.localeCompare(first.date));
+}
+
 function addKnownReservationPaymentTransactions(transactions: Transaction[], reservations: BeachReservation[]): Transaction[] {
   const today = getLocalDateKey();
   const reservationTransactions = reservations
@@ -1057,6 +1104,7 @@ function parseImportedAppData(value: unknown): AppData | null {
     aquaparkEntries?: unknown;
     dailySales?: unknown;
     transactions?: unknown;
+    reportArchive?: unknown;
   };
   const sets = payload.sets ? parseSets(payload.sets) : parseSets(value);
 
@@ -1084,6 +1132,7 @@ function parseImportedAppData(value: unknown): AppData | null {
     sunbedSales: parseSunbedSales(payload.sunbedSales),
     aquaparkEntries: parseAquaparkEntries(payload.aquaparkEntries),
     transactions: addKnownReservationPaymentTransactions(parseTransactions(payload.transactions, payload.dailySales), migratedBeachData.beachReservations),
+    reportArchive: parseReportArchive(payload.reportArchive),
     lastAutomaticResetDate: normalizeResetDate(payload.lastAutomaticResetDate),
   };
 }
@@ -1122,6 +1171,7 @@ function loadSavedAppData(): AppData {
         aquaparkEntries?: unknown;
         dailySales?: unknown;
         transactions?: unknown;
+        reportArchive?: unknown;
         lastAutomaticResetDate?: unknown;
       };
       const sets = parseSets(parsed.sets, true);
@@ -1142,6 +1192,7 @@ function loadSavedAppData(): AppData {
           sunbedSales: parseSunbedSales(parsed.sunbedSales),
           aquaparkEntries: parseAquaparkEntries(parsed.aquaparkEntries),
           transactions: addKnownReservationPaymentTransactions(parseTransactions(parsed.transactions, parsed.dailySales), migratedBeachData.beachReservations),
+          reportArchive: parseReportArchive(parsed.reportArchive),
           lastAutomaticResetDate: normalizeResetDate(parsed.lastAutomaticResetDate),
         };
       }
@@ -1174,6 +1225,7 @@ function loadSavedAppData(): AppData {
           sunbedSales: [],
           aquaparkEntries: [],
           transactions: [],
+          reportArchive: [],
         };
       }
     }
@@ -1200,6 +1252,7 @@ function loadSavedAppData(): AppData {
           sunbedSales: [],
           aquaparkEntries: [],
           transactions: [],
+          reportArchive: [],
         };
       }
     }
@@ -1220,6 +1273,7 @@ function loadSavedAppData(): AppData {
           sunbedSales: [],
           aquaparkEntries: [],
           transactions: [],
+          reportArchive: [],
         };
       }
     }
@@ -1237,6 +1291,7 @@ function loadSavedAppData(): AppData {
         sunbedSales: [],
         aquaparkEntries: [],
         transactions: [],
+        reportArchive: [],
       };
     }
 
@@ -1257,7 +1312,7 @@ function updateSetStatus(set: BeachSet, status: SetStatus, details: Partial<Beac
       : status === 'paid'
         ? { beachReservationId: undefined, surname: undefined, reservedDays: undefined }
         : status === 'left'
-          ? { beachReservationId: undefined, surname: undefined, reservedDays: undefined }
+          ? { beachReservationId: undefined, surname: undefined, reservedDays: undefined, price: undefined, priceMode: undefined, dailySaleId: undefined }
           : { beachReservationId: undefined, surname: undefined, reservedDays: undefined, price: undefined, priceMode: undefined, dailySaleId: undefined };
 
   return {
@@ -1449,6 +1504,7 @@ function initializeAppDataForToday(appData: AppData, today = getLocalDateKey()):
     extraBeds: applyDailyResetToBeds(appData.extraBeds),
     beachReservations: applyDailyResetToBeachReservations(appData.beachReservations),
     sunbedSales: [],
+    reportArchive: archiveTransactionsForDate(appData.reportArchive, lastResetDate, appData.transactions),
     transactions: [],
     lastAutomaticResetDate: today,
   };
@@ -1527,7 +1583,7 @@ function getBeachReservations(
 function createBackupPayload(appData: AppData): BackupPayload {
   return {
     app: 'Beach Set Manager',
-    version: 11,
+    version: 12,
     exportedAt: new Date().toISOString(),
     sets: appData.sets,
     extraBeds: appData.extraBeds,
@@ -1536,6 +1592,7 @@ function createBackupPayload(appData: AppData): BackupPayload {
     sunbedSales: appData.sunbedSales,
     aquaparkEntries: appData.aquaparkEntries,
     transactions: appData.transactions,
+    reportArchive: appData.reportArchive,
     lastAutomaticResetDate: appData.lastAutomaticResetDate,
   };
 }
@@ -1557,6 +1614,7 @@ function App() {
     () => initialAppData.aquaparkEntries,
   );
   const [transactions, setTransactions] = useState<Transaction[]>(() => initialAppData.transactions);
+  const [reportArchive, setReportArchive] = useState<ArchivedDailyReport[]>(() => initialAppData.reportArchive);
   const [reservationsCollapsed, setReservationsCollapsed] = useState(() => window.localStorage.getItem('beach-reservations-collapsed') === 'true');
   const [currentTime, setCurrentTime] = useState(() => new Date());
   const [lastAutomaticResetDate, setLastAutomaticResetDate] = useState(
@@ -1571,6 +1629,7 @@ function App() {
   const beachTwoRef = useRef<HTMLElement | null>(null);
   const bedsRef = useRef<HTMLElement | null>(null);
   const lastAutomaticResetDateRef = useRef(lastAutomaticResetDate);
+  const transactionsRef = useRef(transactions);
 
   useEffect(() => {
     window.localStorage.setItem(
@@ -1583,10 +1642,15 @@ function App() {
         sunbedSales,
         aquaparkEntries,
         transactions,
+        reportArchive,
         lastAutomaticResetDate,
       }),
     );
-  }, [sets, extraBeds, beachReservations, savedSurnames, sunbedSales, aquaparkEntries, transactions, lastAutomaticResetDate]);
+  }, [sets, extraBeds, beachReservations, savedSurnames, sunbedSales, aquaparkEntries, transactions, reportArchive, lastAutomaticResetDate]);
+
+  useEffect(() => {
+    transactionsRef.current = transactions;
+  }, [transactions]);
 
   useEffect(() => {
     window.localStorage.setItem('beach-reservations-collapsed', String(reservationsCollapsed));
@@ -1631,6 +1695,9 @@ function App() {
     : null;
 
   function completeDailyReset(resetDate: string, message?: string) {
+    const closingDate = lastAutomaticResetDateRef.current;
+    const closingTransactions = transactionsRef.current;
+    setReportArchive((currentArchive) => archiveTransactionsForDate(currentArchive, closingDate, closingTransactions));
     lastAutomaticResetDateRef.current = resetDate;
     setLastAutomaticResetDate(resetDate);
     setSets((currentSets) => applyDailyResetToSets(currentSets));
@@ -1638,6 +1705,7 @@ function App() {
       setBeachReservations((currentReservations) => applyDailyResetToBeachReservations(currentReservations));
     setSunbedSales([]);
     setTransactions([]);
+    transactionsRef.current = [];
     closeEditor();
 
     if (message) {
@@ -2178,6 +2246,7 @@ function App() {
       sunbedSales,
       aquaparkEntries,
       transactions,
+      reportArchive,
       lastAutomaticResetDate,
     });
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
@@ -2223,6 +2292,8 @@ function App() {
         setSunbedSales(imported.sunbedSales);
         setAquaparkEntries(imported.aquaparkEntries);
         setTransactions(imported.transactions);
+        transactionsRef.current = imported.transactions;
+        setReportArchive(imported.reportArchive);
         const importedResetDate = imported.lastAutomaticResetDate ?? getLocalDateKey();
         lastAutomaticResetDateRef.current = importedResetDate;
         setLastAutomaticResetDate(importedResetDate);
@@ -2248,7 +2319,8 @@ function App() {
         '- Beach set and bed assignments are cleared.',
         '- Beach reservation date ranges are preserved.',
         '- Non-numbered Sunbed sales are cleared.',
-        '- Current-day recorded sales are cleared for the new report.',
+        '- The current Daily Report is saved in Report Archive.',
+        '- Current-day recorded sales are then cleared for the new report.',
         '',
         'Continue?',
       ].join('\n'),
@@ -2273,6 +2345,8 @@ function App() {
       setSunbedSales([]);
       setAquaparkEntries([]);
       setTransactions([]);
+      transactionsRef.current = [];
+      setReportArchive([]);
       const today = getLocalDateKey();
       lastAutomaticResetDateRef.current = today;
       setLastAutomaticResetDate(today);
@@ -2317,6 +2391,7 @@ function App() {
           onShowReport={() => setSettingsView('report')}
           onBackToSettings={() => setSettingsView('menu')}
           transactions={transactions}
+          reportArchive={reportArchive}
           onDeleteTransaction={deleteTransaction}
         />
       ) : (
@@ -2716,7 +2791,7 @@ function ActiveReservationsSection({
             <article className="active-reservation-card" key={reservation.id}>
               <div className="active-reservation-card-header">
                 <strong>{reservation.surname}</strong>
-                <span className="active-days">{formatDaysLeft(getInclusiveDateDays(reservation.startDate, reservation.endDate))}</span>
+                <span className="active-days">{formatDaysLeft(getReservationDaysLeft(reservation.startDate, reservation.endDate))}</span>
               </div>
               <p className="active-reservation-date">{formatReservationDates(reservation.startDate, reservation.endDate)}</p>
               {reservation.totalAmountPaid !== undefined ? <p className="active-reservation-paid">Paid: {formatEuro(reservation.totalAmountPaid)}</p> : null}
@@ -3148,32 +3223,71 @@ function getDailyReport(transactions: Transaction[]) {
   const sunbedTotal = totalFor(sunbedSales);
   const reservationTotal = totalFor(reservationPayments);
   const aquaparkTotal = totalFor(aquaparkSales);
-  return { beachSales, bedSales, sunbedSales, reservationPayments, aquaparkSales, beachTotal, bedTotal, sunbedTotal, reservationTotal, aquaparkTotal, total: beachTotal + bedTotal + sunbedTotal + reservationTotal + aquaparkTotal, sunbedQuantity: sunbedSales.reduce((total, sale) => total + getTransactionQuantity(sale), 0), wristbandCount: aquaparkSales.reduce((total, sale) => total + getTransactionWristbands(sale), 0), ticketBreakdown };
+  const sunbedsSectionTotal = beachTotal + bedTotal + sunbedTotal + reservationTotal;
+  return { beachSales, bedSales, sunbedSales, reservationPayments, aquaparkSales, beachTotal, bedTotal, sunbedTotal, reservationTotal, aquaparkTotal, sunbedsSectionTotal, total: sunbedsSectionTotal + aquaparkTotal, sunbedQuantity: sunbedSales.reduce((total, sale) => total + getTransactionQuantity(sale), 0), wristbandCount: aquaparkSales.reduce((total, sale) => total + getTransactionWristbands(sale), 0), ticketBreakdown };
 }
 
-function DailyReport({ transactions }: { transactions: Transaction[] }) {
+function formatReportDate(dateKey: string) {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  return new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'long', year: 'numeric' })
+    .format(new Date(year, month - 1, day));
+}
+
+function ReportsPage({ transactions, reportArchive }: { transactions: Transaction[]; reportArchive: ArchivedDailyReport[] }) {
+  const [selectedDate, setSelectedDate] = useState<string>('today');
+  const selectedArchive = reportArchive.find((report) => report.date === selectedDate);
+  const reportTransactions = selectedArchive?.transactions ?? transactions;
+  const reportDate = selectedArchive?.date ?? getLocalDateKey();
+
+  return (
+    <div className="reports-page">
+      <section className="report-archive" aria-labelledby="report-archive-heading">
+        <div className="report-archive-heading">
+          <div>
+            <p className="eyebrow">Saved daily snapshots</p>
+            <h2 id="report-archive-heading">Report Archive</h2>
+          </div>
+          <span>{reportArchive.length} saved</span>
+        </div>
+        <div className="report-date-list" aria-label="Choose report date">
+          <button type="button" className={selectedDate === 'today' ? 'active' : ''} onClick={() => setSelectedDate('today')}>Today</button>
+          {reportArchive.map((report) => (
+            <button type="button" className={selectedDate === report.date ? 'active' : ''} onClick={() => setSelectedDate(report.date)} key={report.date}>
+              {formatReportDate(report.date)}
+            </button>
+          ))}
+        </div>
+        {!reportArchive.length ? <p className="report-empty">Previous daily reports will appear here after Daily Reset.</p> : null}
+      </section>
+      <DailyReport transactions={reportTransactions} date={reportDate} archived={Boolean(selectedArchive)} />
+    </div>
+  );
+}
+
+function DailyReport({ transactions, date, archived = false }: { transactions: Transaction[]; date: string; archived?: boolean }) {
   const report = useMemo(() => getDailyReport(transactions), [transactions]);
-  const today = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date());
 
   return (
     <section className="daily-report-page" aria-labelledby="daily-report-heading">
       <header className="report-hero">
-        <p className="eyebrow">Sales recorded in Beach Set Manager</p>
-        <h2 id="daily-report-heading">Daily Report</h2>
-        <p>{today}</p>
+        <p className="eyebrow">{archived ? 'Archived daily snapshot' : 'Sales recorded in Beach Set Manager'}</p>
+        <h2 id="daily-report-heading">{archived ? 'Archived Report' : 'Daily Report'}</h2>
+        <p>{formatReportDate(date)}</p>
         <div className="report-total">
           <span>Total</span>
           <strong>{formatEuro(report.total)}</strong>
         </div>
         <div className="report-summary-grid">
-          <span>Beach Sets<strong>{formatEuro(report.beachTotal)}</strong><small>{report.beachSales.length} sales</small></span>
-          <span>Beds<strong>{formatEuro(report.bedTotal)}</strong><small>{report.bedSales.length} sales</small></span>
-          <span>Sunbeds<strong>{formatEuro(report.sunbedTotal)}</strong><small>{report.sunbedQuantity} sold</small></span>
-          <span>Reservations<strong>{formatEuro(report.reservationTotal)}</strong><small>{report.reservationPayments.length} payments</small></span>
+          <span>Sunbeds<strong>{formatEuro(report.sunbedsSectionTotal)}</strong><small>{report.beachSales.length + report.bedSales.length + report.sunbedSales.length + report.reservationPayments.length} records</small></span>
           <span>Aquapark<strong>{formatEuro(report.aquaparkTotal)}</strong><small>{report.wristbandCount} wristbands</small></span>
         </div>
       </header>
 
+      <section className="report-group report-group-sunbeds" aria-labelledby="sunbeds-group-heading">
+        <div className="report-group-heading">
+          <div><p className="eyebrow">Beach operation</p><h3 id="sunbeds-group-heading">Sunbeds</h3></div>
+          <strong>{formatEuro(report.sunbedsSectionTotal)}</strong>
+        </div>
       <section className="report-section" aria-labelledby="beach-report-heading">
         <div className="report-section-heading">
           <div>
@@ -3244,7 +3358,13 @@ function DailyReport({ transactions }: { transactions: Transaction[] }) {
           </div>
         ) : <p className="report-empty">No current-day non-numbered Sunbed sales recorded.</p>}
       </section>
+      </section>
 
+      <section className="report-group report-group-aquapark" aria-labelledby="aquapark-group-heading">
+        <div className="report-group-heading">
+          <div><p className="eyebrow">Wristbands and tickets</p><h3 id="aquapark-group-heading">Aquapark</h3></div>
+          <strong>{formatEuro(report.aquaparkTotal)}</strong>
+        </div>
       <section className="report-section" aria-labelledby="aquapark-report-heading">
         <div className="report-section-heading">
           <div>
@@ -3253,6 +3373,17 @@ function DailyReport({ transactions }: { transactions: Transaction[] }) {
           </div>
           <strong>{formatEuro(report.aquaparkTotal)}</strong>
         </div>
+        {report.aquaparkSales.length ? (
+          <div className="report-list report-transaction-list">
+            {report.aquaparkSales.map((sale) => (
+              <p key={sale.id}>
+                <span>{sale.resourceLabel}<small>{sale.description} · {getTransactionWristbands(sale)} wristbands</small></span>
+                <strong>{formatEuro(sale.amount)}</strong>
+              </p>
+            ))}
+          </div>
+        ) : <p className="report-empty">No Aquapark sales were recorded.</p>}
+        <p className="report-breakdown-label">Ticket totals</p>
         <div className="report-list">
           {report.ticketBreakdown.map((ticket) => (
             <p key={ticket.ticketType}>
@@ -3266,6 +3397,7 @@ function DailyReport({ transactions }: { transactions: Transaction[] }) {
             </p>
           ))}
         </div>
+      </section>
       </section>
     </section>
   );
@@ -3326,7 +3458,7 @@ function BeachShortcuts({ onSelect }: { onSelect: (section: BeachShortcut) => vo
   </nav>;
 }
 
-function SettingsPage({ view, backupMessage, importInputRef, savedSurnames, onDailyReset, onExport, onImport, onImportFile, onResetAppData, onDeleteSurname, onShowTransactions, onShowReport, onBackToSettings, transactions, onDeleteTransaction }: {
+function SettingsPage({ view, backupMessage, importInputRef, savedSurnames, onDailyReset, onExport, onImport, onImportFile, onResetAppData, onDeleteSurname, onShowTransactions, onShowReport, onBackToSettings, transactions, reportArchive, onDeleteTransaction }: {
   view: SettingsView;
   backupMessage: string | null;
   importInputRef: MutableRefObject<HTMLInputElement | null>;
@@ -3341,13 +3473,14 @@ function SettingsPage({ view, backupMessage, importInputRef, savedSurnames, onDa
   onShowReport: () => void;
   onBackToSettings: () => void;
   transactions: Transaction[];
+  reportArchive: ArchivedDailyReport[];
   onDeleteTransaction: (transactionId: string) => void;
 }) {
   if (view === 'transactions') {
     return <section className="settings-subpage"><button type="button" className="settings-back" onClick={onBackToSettings}>Back to Settings</button><TransactionsPage transactions={transactions} onDelete={onDeleteTransaction} /></section>;
   }
   if (view === 'report') {
-    return <section className="settings-subpage"><button type="button" className="settings-back" onClick={onBackToSettings}>Back to Settings</button><DailyReport transactions={transactions} /></section>;
+    return <section className="settings-subpage"><button type="button" className="settings-back" onClick={onBackToSettings}>Back to Settings</button><ReportsPage transactions={transactions} reportArchive={reportArchive} /></section>;
   }
   return <section className="settings-page" aria-labelledby="settings-heading">
     <header className="report-hero"><p className="eyebrow">Local app controls</p><h2 id="settings-heading">Settings</h2></header>
@@ -3385,7 +3518,7 @@ function SetDetails({
       <span className="card-detail">
         <strong>Reserved</strong>
         <small>{reservation?.surname || beachSet.surname || 'Missing reservation'}</small>
-        <small>{formatDays(reservation ? getInclusiveDateDays(reservation.startDate, reservation.endDate) : beachSet.reservedDays)}</small>
+        <small>{formatDays(reservation ? getReservationDaysLeft(reservation.startDate, reservation.endDate) : beachSet.reservedDays)}</small>
       </span>
     );
   }
@@ -3424,7 +3557,7 @@ function BedDetails({ bed, beachReservations }: { bed: ExtraBed; beachReservatio
       <span className="card-detail">
         <strong>Reserved</strong>
         <small>{reservation?.surname || bed.surname || 'Missing reservation'}</small>
-        <small>{formatDays(reservation ? getInclusiveDateDays(reservation.startDate, reservation.endDate) : bed.reservedDays)}</small>
+        <small>{formatDays(reservation ? getReservationDaysLeft(reservation.startDate, reservation.endDate) : bed.reservedDays)}</small>
       </span>
     );
   }
@@ -3558,7 +3691,7 @@ function BeachReservationAssignmentPanel({
                 >
                   <span className="existing-reservation-option-header">
                     <strong>{reservation.surname}</strong>
-                    <span>{formatDaysLeft(getInclusiveDateDays(reservation.startDate, reservation.endDate))}</span>
+                    <span>{formatDaysLeft(getReservationDaysLeft(reservation.startDate, reservation.endDate))}</span>
                   </span>
                   <span className="existing-reservation-option-dates">
                     {formatReservationDates(reservation.startDate, reservation.endDate)}

@@ -3538,6 +3538,122 @@ h4 {
   background: #fff0f2;
 }
 
+.reports-page {
+  display: grid;
+  gap: 14px;
+}
+
+.report-archive {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--cs-border);
+  border-radius: var(--cs-radius-md);
+  background: var(--cs-surface);
+}
+
+.report-archive-heading,
+.report-group-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.report-archive-heading h2 {
+  font-size: 1.05rem;
+}
+
+.report-archive-heading > span {
+  flex: 0 0 auto;
+  color: var(--cs-text-secondary);
+  font-size: 0.72rem;
+  font-weight: 750;
+}
+
+.report-date-list {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  padding-bottom: 2px;
+  scrollbar-width: none;
+}
+
+.report-date-list::-webkit-scrollbar {
+  display: none;
+}
+
+.report-date-list button {
+  min-height: 40px;
+  flex: 0 0 auto;
+  padding: 0 11px;
+  color: var(--cs-text-secondary);
+  font-size: 0.75rem;
+  font-weight: 750;
+  border: 1px solid var(--cs-border-strong);
+  border-radius: var(--cs-radius-sm);
+  background: var(--cs-surface-muted);
+}
+
+.report-date-list button.active {
+  color: #ffffff;
+  border-color: var(--cs-blue);
+  background: var(--cs-blue);
+}
+
+.report-group {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--cs-border);
+  border-radius: var(--cs-radius-md);
+}
+
+.report-group-sunbeds {
+  background: #fff9df;
+  border-color: #e6d894;
+}
+
+.report-group-aquapark {
+  background: #eaf7ff;
+  border-color: #add8ef;
+}
+
+.report-group-heading {
+  min-height: 48px;
+  padding: 2px 3px 8px;
+  border-bottom: 1px solid currentColor;
+}
+
+.report-group-heading h3 {
+  margin: 0;
+  color: var(--cs-text);
+  font-size: 1.08rem;
+  font-weight: 800;
+}
+
+.report-group-heading > strong {
+  color: var(--cs-text);
+  font-size: 1.15rem;
+  font-weight: 850;
+}
+
+.report-group .report-section {
+  border-color: rgba(88, 101, 115, 0.22);
+}
+
+.report-breakdown-label {
+  margin: 0;
+  padding: 9px 0 2px;
+  color: var(--cs-text-secondary);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border-top: 1px solid var(--cs-border);
+}
+
 /* Keep the Sunbed form actions inside the visible mobile viewport above the keyboard. */
 .sunbed-sale-sheet {
   max-height: calc(100dvh - 16px);
