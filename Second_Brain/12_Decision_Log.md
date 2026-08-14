@@ -12,5 +12,7 @@ Status: `canonical`
 - D-008 — `prototype_decision` — Offline mutations use operation IDs and version/conflict checks; no silent last-write-wins for money or occupancy.
 - D-009 — `prototype_decision` — Payment/fiscal integrations are postponed until the shared operational platform is stable.
 - D-010 — `canonical` — Second Brain is project memory/operating manual; repository, tests, migrations and database remain technical truth.
+- D-011 — `prototype_decision` — The product domain is production-branding infrastructure, not a backend prerequisite. Purchase it during Production Preparation / Petalon Commercial Pilot after the shared backend is validated, unless Vuk chooses to reserve the final brand early.
+- D-012 — `prototype_decision` — Prefer independent registrar/DNS ownership (currently Cloudflare Registrar when the TLD is supported) with the frontend connected to Vercel. Do not add a paid Supabase custom API domain unless a later public integration or branding requirement gives it concrete value.
 
 A decision may only be replaced by a new recorded decision explaining what it supersedes and why.
