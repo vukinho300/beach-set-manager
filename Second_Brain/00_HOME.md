@@ -1,7 +1,7 @@
 # Beach Management Platform — Second Brain
 
 Status: `canonical`
-Last reviewed: 2026-08-13
+Last reviewed: 2026-08-14
 Repository checkpoint: `7431bd93884337db1ab47e9bac2a50fc8e07a168`
 
 This vault is the human-readable control center for `beach-set-manager` as it evolves from a local-only Petalon PWA into a secure, shared, multi-tenant seasonal SaaS platform.
@@ -32,6 +32,7 @@ The current application is a polished single-browser React/Vite/TypeScript PWA. 
 14. [[14_Implementation_Roadmap]]
 15. [[15_Open_Questions_and_Clarifications]]
 16. [[16_Experiments_and_Evidence]]
+17. [[17_Domain_and_Production_Branding]]
 
 ## Current product areas
 
@@ -47,5 +48,7 @@ The current application is a polished single-browser React/Vite/TypeScript PWA. 
 ## Immediate objective
 
 Build **Secure Shared Petalon** for Vuk and Vito first: authenticated users, one shared database-backed state, Row Level Security, durable persistence, and real-time updates between devices. Offline mutation sync is designed now but should be implemented only after the online shared path and concurrency rules are proven.
+
+A custom product domain is explicitly **not** required for this backend phase. Domain purchase belongs to Production Preparation / the Petalon commercial pilot. See [[17_Domain_and_Production_Branding]].
 
 See [[11_Project_Status_and_Next_Actions]].
