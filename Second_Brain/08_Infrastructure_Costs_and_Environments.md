@@ -1,7 +1,7 @@
 # Infrastructure, Costs and Environments
 
 Status: `canonical research snapshot`
-Reviewed: 2026-08-13
+Reviewed: 2026-08-14
 
 ## Development cost target
 
@@ -13,7 +13,9 @@ Recommended now:
 - GitHub: existing repository;
 - Vercel Hobby: acceptable while the project remains personal/non-commercial development;
 - Supabase Free: acceptable for development/shared prototype;
-- local Supabase is an option for schema/migration work.
+- local Supabase is an option for schema/migration work;
+- custom product domain: defer until production preparation/commercial pilot unless Vuk buys early purely to reserve the brand;
+- Supabase custom API domain: do not buy during development.
 
 ## Supabase Free snapshot
 
@@ -48,6 +50,14 @@ Current Pro entry price is about $25/month and includes 7-day daily backups.
 Hobby is $0 and intended for personal/non-commercial use. Pro is currently $20/month and is designed for professional/commercial work.
 
 Upgrade trigger: when the deployed customer-facing app becomes commercial/paid, not when development traffic becomes large.
+
+## Domain cost
+
+The domain is not required for shared-backend development. Purchase it during the Production Preparation / Petalon Commercial Pilot phase, once the product brand is finalized and the shared backend has been validated.
+
+Preferred registrar strategy is an independent low-cost registrar, currently Cloudflare Registrar when the chosen TLD is supported, with DNS pointing to Vercel. See [[17_Domain_and_Production_Branding]].
+
+A Supabase custom API domain is not part of the default production budget. It is a paid add-on and should only be added later if a branded/stable API hostname has real product or integration value.
 
 ## Environments
 
@@ -101,4 +111,4 @@ Supabase currently allows a paused Free project to be restored for up to one yea
 
 ## Research sources
 
-Re-check provider pricing and terms before every commercial season because limits and prices can change.
+Re-check provider pricing, registrar renewal prices and hosting terms before every commercial season because limits and prices can change.
