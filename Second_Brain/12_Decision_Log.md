@@ -21,5 +21,9 @@ Status: `canonical`
 - D-017 — `canonical` — Multi-location provisioning/deployment automation is deferred until a second real location exists.
 - D-018 — `canonical` — Customer-facing ownership/infrastructure concealment remains important before broader external rollout but is deferred until the shared product works.
 - D-019 — `canonical` — ChatGPT maintains the Second Brain; Codex is the coding agent and must not edit `Second_Brain/` unless Vuk explicitly requests an exception.
+- D-020 — `canonical` — Codex normally runs through the local terminal checkout. Repository-file access comes from the local clone; external provider access is granted only through the relevant local authenticated CLI when a step actually needs it.
+- D-021 — `canonical` — Prefer the simplest reliable verification path. If a short manual action by Vuk is faster, simpler or clearer than agent automation, hand that action to Vuk instead of spending tokens automating it.
+- D-022 — `canonical` — Codex must not loop indefinitely on credential/browser/provider blockers. After at most two sensible attempts at the same external-tool blocker, stop and request one exact manual action from Vuk, then resume from a verified state.
+- D-023 — `canonical` — Privileged credentials are never placed in Codex prompts, committed files or the Second Brain. Supabase/Vercel/GitHub access should use supported local authentication flows and ignored local credential/environment storage.
 
 A decision may only be replaced by a new recorded decision explaining what it supersedes and why.
