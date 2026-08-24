@@ -1,55 +1,33 @@
 # Licensing, White Label and Seasonality
 
-Status: `prototype_decision`
+Status: `deferred`
 
-## Licensing unit
+## Current decision
 
-License per location per season, not per deployment or cloned application.
+Licensing, device/session enforcement and white-label controls are not part of Shared Petalon v1.
 
-Example:
+The immediate control mechanism is much simpler: authenticated users plus active Petalon membership enforced by RLS.
 
-Petalon — 2027 season
-- starts_at
-- expires_at
-- status
-- max_worker_accounts
-- max_admin_accounts
-- max_active_sessions
-- feature entitlements
+## Device/session limits
 
-Keep a separate license-period row for each season instead of overwriting one permanent license record.
+The previous plan to enforce concurrent active-session seats is deferred and should not be implemented now. There is no device-count limit, installation UUID enforcement or permanent hardware fingerprinting in the first shared release.
 
-## Suggested license states
+If account sharing becomes a real commercial problem later, choose the minimum control justified by evidence at that time.
 
-- scheduled
-- active
-- grace
-- read_only
-- suspended
-- expired
+## Seasonal licensing
 
-Inactive/expired locations are not deleted. Historical data and configuration remain so the next season can be reactivated without rebuilding the application.
+The older location-per-season licensing model remains a possible future commercial design, but it is not required to build or validate the three-user Petalon application.
 
-## Device/session model
+Do not create license tables or license-state logic during the current shared-database milestone unless Vuk explicitly re-promotes that work.
 
-Prefer concurrent active-session seats instead of permanent hardware fingerprinting.
+## White label / ownership concealment
 
-Each installation gets a random persistent installation UUID. The backend tracks active app sessions and enforces the licensed concurrent-seat count transactionally.
+Removing obvious links between the customer-facing product and Vuk's GitHub/Vercel/infrastructure identity remains important before broader external/commercial rollout, but it is deferred until the shared product works.
 
-## White label
+Later hardening can include a neutral product domain, neutral customer-facing branding, separate production project/account organization where appropriate, and removal of repository/provider references from customer-visible surfaces.
 
-Customer-facing UI must not expose developer ownership. Branding/configuration belongs to the location/organization configuration:
+This is not a substitute for security. Backend access still depends on Auth + RLS + membership.
 
-- display name
-- logo if later needed
-- accent/theme options if later needed
+## Future multi-location rollout
 
-Platform-owner controls must remain in a separate private admin/control interface.
-
-## Seasonal cost principle
-
-Inactive locations in a shared database create almost no incremental runtime usage. If all customers are inactive for winter, archive/backup production data and evaluate downgrading/pausing infrastructure according to current provider rules before each off-season.
-
-## Payment status
-
-Until payment-terminal integration becomes part of the product, infrastructure should remain free or close to free during development. Commercial hosting/tier upgrades should be triggered by the first paid production deployment or by security/reliability requirements, not by speculative scale.
+Do not build speculative customer provisioning now. When a second real location is ready, design a repeatable pipeline for creating/configuring its location data, accounts, deployment/environment and branding from the proven Petalon process.

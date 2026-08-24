@@ -4,16 +4,28 @@ Status: `canonical`
 
 ## Current state
 
-The repository is still a local-only React/Vite/TypeScript PWA using browser localStorage. The current product workflows, transaction ledger, reports, reservations, Sunbeds and Aquapark are implemented, but shared persistence, authentication, RLS, realtime and licensing are not.
+The repository is still a local-only React/Vite/TypeScript PWA using browser `localStorage`. Shared persistence, Beach Set Manager Supabase Auth, RLS and multi-user state are not implemented yet.
+
+The connected Supabase account currently contains an unrelated `KNO` project; no dedicated Beach Set Manager project exists yet.
+
+## Immediate milestone
+
+**Shared Petalon v1** — Vuk, Vito and Mark can sign in, load the same Petalon state, make shared updates, see accepted changes, retain shared state after refresh, and be denied Petalon data when membership is inactive.
 
 ## Immediate next action
 
-Do not change application code yet. Finish the Phase 0 architecture contract, resolve the open questions, then create the development backend environment.
+Codex should add the minimal Supabase client/repository foundation to the application without switching live persistence yet:
 
-## First implementation milestone
+- pinned `@supabase/supabase-js` dependency;
+- environment contract using URL + publishable key only;
+- lazy/controlled browser client initialization;
+- typed boundary for loading/saving versioned shared `AppData`;
+- no service-role key;
+- no UI/auth behavior change yet;
+- no Second Brain edits.
 
-**Secure Shared Petalon:** Vuk and Vito authenticate, load the same Petalon records, make shared Beach/Bed updates, see changes in realtime, and retain the same state after refresh.
+After that foundation is reviewed, create the dedicated Supabase project, create the minimal schema/migration with RLS, then provision Vuk/Vito/Mark and connect the app.
 
-## After that
+## Deferred
 
-Migrate the remaining domains, harden transaction ownership, add production environment separation, then licensing/admin controls. Offline mutation sync comes after the online shared path is proven. Payment integrations remain later work.
+Do not block Shared Petalon v1 on device/session limits, offline writes, licensing, multi-location provisioning, white-labeling, infrastructure concealment or payment integrations.

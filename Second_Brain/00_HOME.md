@@ -1,10 +1,10 @@
 # Beach Management Platform — Second Brain
 
 Status: `canonical`
-Last reviewed: 2026-08-14
-Repository checkpoint: `7431bd93884337db1ab47e9bac2a50fc8e07a168`
+Last reviewed: 2026-08-24
+Repository implementation checkpoint reviewed: `8680bf97a513457cffb7b61d75aa2e5a49c00d76`
 
-This vault is the human-readable control center for `beach-set-manager` as it evolves from a local-only Petalon PWA into a secure, shared, multi-tenant seasonal SaaS platform.
+This vault is the human-readable control center for `beach-set-manager` as it evolves from a local-only Petalon PWA into a secure shared operational application.
 
 ## Project rule
 
@@ -12,7 +12,9 @@ This vault is the human-readable control center for `beach-set-manager` as it ev
 
 ## Current phase
 
-The current application is a polished single-browser React/Vite/TypeScript PWA. Operational state is still stored in browser `localStorage`; there is no backend, login, shared database or real-time multi-user synchronization yet. The next major chapter is the shared-platform foundation.
+The current application is still a polished single-browser React/Vite/TypeScript PWA using browser `localStorage`. There is no Beach Set Manager Supabase project, login, shared database or multi-user synchronization implemented yet.
+
+The immediate goal is deliberately narrow: make one Petalon deployment work securely for Vuk, Vito and Mark against one shared database.
 
 ## Main navigation
 
@@ -42,13 +44,25 @@ The current application is a polished single-browser React/Vite/TypeScript PWA. 
 - Non-numbered Sunbeds: quantity + amount + description sales.
 - Aquapark: wristbands, ticket types, prices, timing, extra time, returned wristbands, expiry highlighting.
 - Transactions: current-day ledger with deletion audit state.
-- Reports: current-day totals derived from active transactions.
+- Reports: current-day totals and local Report Archive behavior implemented in the browser application.
 - Settings: transactions, reports, reset, backups/local tools.
 
 ## Immediate objective
 
-Build **Secure Shared Petalon** for Vuk and Vito first: authenticated users, one shared database-backed state, Row Level Security, durable persistence, and real-time updates between devices. Offline mutation sync is designed now but should be implemented only after the online shared path and concurrency rules are proven.
+Build **Shared Petalon v1**:
 
-A custom product domain is explicitly **not** required for this backend phase. Domain purchase belongs to Production Preparation / the Petalon commercial pilot. See [[17_Domain_and_Production_Branding]].
+- Supabase Auth accounts for Vuk, Vito and Mark;
+- one Petalon location;
+- one shared database-backed application state;
+- Row Level Security on every exposed application table;
+- active location membership as the access/revocation boundary;
+- realtime or equivalent refresh behavior so all three users see accepted changes;
+- no device/session-seat enforcement;
+- no offline write queue;
+- no multi-location provisioning automation yet.
+
+The frontend is not treated as a security boundary. A copied browser bundle must not grant access to Petalon data without a valid authenticated user and active membership.
+
+Commercial white-labeling, production ownership concealment, multi-location deployment automation, advanced licensing and device controls are later work.
 
 See [[11_Project_Status_and_Next_Actions]].

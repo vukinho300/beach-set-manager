@@ -2,13 +2,32 @@
 
 Status: `canonical`
 
-Resolve these before implementation begins:
+## Resolved immediate product scope
 
-1. First login method: recommendation is email/password for Vuk and Vito unless Vuk prefers magic-link/OTP.
-2. First roles: should Vuk be both PLATFORM_OWNER and a Petalon WORKER membership? Recommendation: yes, keep platform authority separate from location membership.
-3. First pilot users: recommendation is Vuk + Vito only; add Mark after shared-state behavior is proven.
-4. Initial data: recommendation is start the development database with controlled fixture/import data, not silently move current production-browser localStorage.
-5. Petalon timezone: confirm `Europe/Zagreb` as the business-day timezone.
-6. Offline scope: recommendation is design now but do not allow offline financial/operational writes in the first shared milestone.
-7. Daily Reset: decide whether server-side business-day close is included in the first full backend migration or immediately after the first shared Beach/Bed slice; recommendation is before any real multi-user production pilot.
-8. Second Brain location: it currently lives in `Second_Brain/` inside the application repository. Move it to a separate repository later only if Vuk explicitly prefers that workflow.
+As of 2026-08-24:
+
+1. Initial real users are Vuk, Vito and Mark.
+2. Initial authentication is email/password.
+3. All three initially use the same Petalon operational app; user differences come later.
+4. Petalon is the only required shared location for v1.
+5. RLS + active membership is the required access/revocation boundary.
+6. Device/session-count enforcement is not required.
+7. Offline operational/financial writes are not required for v1.
+8. Multi-location production/provisioning automation is deferred until another location is actually needed.
+9. Hiding ownership/provider/repository traces is deferred but remains important before broader customer-facing rollout.
+10. ChatGPT maintains Second Brain; Codex writes application code.
+
+## Operational information still required before account provisioning
+
+The actual email addresses to use for the Vuk, Vito and Mark Supabase Auth accounts must be known when those accounts are created. Passwords should be created/set through an appropriate secure Auth flow and must never be written into the repository or Second Brain.
+
+## Supabase project creation
+
+A dedicated Beach Set Manager Supabase project does not yet exist in the connected account. Before ChatGPT creates it directly, the target Supabase organization must be explicitly confirmed because project creation is a billable/account-scoped action even when the selected plan/cost is free.
+
+## Intentionally deferred technical choices
+
+- exact future multi-location provisioning pipeline;
+- exact white-label/ownership-separation topology;
+- exact server scheduler for future midnight business-day rollover;
+- whether the JSONB state model should later be normalized domain-by-domain.

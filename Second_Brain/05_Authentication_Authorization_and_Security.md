@@ -4,42 +4,65 @@ Status: `prototype_decision`
 
 ## Direction
 
-Use Supabase Auth plus Postgres Row Level Security for the first shared-platform implementation.
+Use Supabase Auth plus Postgres Row Level Security.
 
-## Roles
+Initial real users:
 
-Initial roles:
+- Vuk
+- Vito
+- Mark
 
-- PLATFORM_OWNER — Vuk, platform-wide administration only through private/admin paths.
-- LOCATION_ADMIN — customer/boss management for assigned location(s).
-- WORKER — daily operational work.
+Initial login method: email/password.
 
-## Membership model
+## Initial access model
 
-A user may access a location only through an active `location_membership` row. Role is location-scoped except PLATFORM_OWNER.
+All three users initially need access to the same Petalon operational application. User-specific UI/permission differences are not required for the first shared milestone.
+
+Keep a role column in membership data so differentiated behavior can be added later without redesigning identity. Expected future intent remains:
+
+- PLATFORM_OWNER — Vuk's private platform/developer authority;
+- LOCATION_ADMIN — location owner/manager experience, expected for Mark;
+- WORKER — daily operational experience, expected for Vito.
+
+Vuk also has normal active Petalon membership so ordinary application behavior is tested through the same RLS path as other users.
+
+## Membership and revocation
+
+A browser user can access Petalon application data only through an active `location_memberships` row matching `auth.uid()` and the Petalon location.
+
+Disabling/deleting that membership must immediately make RLS deny Petalon data access on subsequent database/API requests, even if the user's frontend bundle was copied or an Auth access token has not yet expired.
+
+Deleting an Auth user can additionally prevent future login/token refresh, but membership/RLS is the primary immediate application-data revocation boundary.
 
 ## RLS rules
 
-RLS must be enabled on every exposed tenant-facing table. Policies should enforce location membership and role-based operation permissions.
+RLS must be enabled on every exposed application table. Policies must check actual tenant/location membership and must never rely on `TO authenticated` alone as authorization.
 
-Do not rely on hidden buttons or frontend route guards as security.
+Do not use user-editable `user_metadata` for authorization.
+
+Do not rely on hidden buttons, frontend route guards, JavaScript obfuscation or unpublished URLs as security.
 
 ## Privileged keys
 
-Supabase secret/service-role credentials must never be shipped to the browser. Privileged platform-owner actions belong in trusted server-side functions/admin tooling.
+Only a Supabase publishable key may be used in the public browser client. Supabase secret/service-role credentials must never be shipped to the browser or committed to the public frontend environment.
 
-## Immediate revocation
+Privileged platform-owner actions belong in trusted server-side/admin tooling when such actions are eventually needed.
 
-Do not rely only on JWT claims for states that may need immediate revocation, such as location suspension, membership disablement or expired license. Authoritative database state must be checked for protected mutations.
+## Code-copy reality
 
-## Security before first paying customer
+A browser application's JavaScript cannot be made impossible to copy. The security objective is therefore that copying the frontend does not provide useful access to Petalon's real backend or data.
 
-- automated RLS isolation tests;
-- separate development and production projects;
-- database constraints on exclusive resources;
-- audit log for destructive/financial/admin actions;
-- MFA for PLATFORM_OWNER, strongly recommended for LOCATION_ADMIN;
-- backup + restore test;
-- no production secrets in Git or frontend bundles;
-- input validation both client and server side;
-- explicit handling of stale/offline mutations.
+A copied frontend using the real Supabase URL/publishable key still has to authenticate and pass RLS. Once membership is disabled, it must not be able to read or mutate Petalon data.
+
+If future commercial protection requires making a copied UI less independently useful, move selected valuable business logic into trusted backend functions. That is later hardening, not a prerequisite for shared DB work.
+
+## Security checks before Shared Petalon v1 is accepted
+
+- RLS enabled on all exposed app tables;
+- no anon read/write access to Petalon data;
+- positive test: each of Vuk/Vito/Mark with active membership can load/update Petalon;
+- negative test: authenticated user without membership cannot read Petalon;
+- revocation test: disabling a membership removes data access;
+- separate publishable and secret keys handled correctly;
+- production build contains no privileged key;
+- database/security advisors reviewed after schema changes.

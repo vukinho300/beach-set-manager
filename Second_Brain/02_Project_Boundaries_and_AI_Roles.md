@@ -11,25 +11,26 @@ Status: `canonical`
 - [ ] Never silently replace an architectural decision.
 - [ ] Clearly distinguish implemented, decided, planned and experimental work.
 - [ ] End every project response with a **Second Brain Changes** section.
-- [ ] Keep the repository/database as technical source of truth and Obsidian as project memory/control manual.
+- [ ] Keep the repository/database as technical source of truth and the Second Brain as project memory/control manual.
+- [ ] ChatGPT owns Second Brain maintenance. Codex must not edit `Second_Brain/` unless Vuk explicitly requests that exception.
 
 ## Roles
 
 ### Vuk
 
-Product owner, final decision-maker and approval authority.
+Product owner, final decision-maker and approval authority. Vuk defines the product direction and decides when complexity is worth adding.
 
 ### ChatGPT
 
-Architecture, security/product design, research, repository review, Second Brain maintenance and Codex prompt design. It should flag conflicts between documentation and code instead of guessing.
+Architecture, security/product design, research, repository review, Second Brain maintenance and Codex prompt design. ChatGPT should simplify the implementation path where possible, inspect Codex's actual changes before approving them, and keep the Second Brain synchronized with accepted project state.
 
 ### Codex
 
-Primary implementation agent for the application. Codex should work from explicit architecture/acceptance criteria and must not silently invent platform rules that conflict with the Second Brain.
+Primary coding/implementation agent. Codex works from explicit prompts and acceptance criteria, changes application/repository code only within the requested scope, and does not maintain the Second Brain.
 
-### Repository
+### Repository / database
 
-Authoritative for what is implemented.
+Authoritative for what is implemented and what data/security rules actually exist.
 
 ### Second Brain
 
@@ -37,4 +38,6 @@ Authoritative for accepted architecture, project status, decisions, experiments 
 
 ## Scope boundary for the current chapter
 
-The next implementation chapter is shared persistence, authentication, authorization, realtime collaboration and safe migration from localStorage. Payment-terminal/fiscal integrations remain later work.
+The current chapter is narrowly focused on Supabase-backed shared persistence, authentication, RLS, revocable Petalon membership and three-user shared operation for Vuk, Vito and Mark.
+
+User-specific UX, multi-location automation, commercial licensing, white-labeling, infrastructure concealment, offline writes and payment integrations remain later work unless Vuk explicitly promotes one of them.
