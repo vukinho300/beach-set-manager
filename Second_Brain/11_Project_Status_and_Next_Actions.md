@@ -6,66 +6,86 @@ Status: `canonical`
 
 The React application still uses browser `localStorage` as its live operational persistence.
 
-Step 1 is implemented and merged in PR #3 at `85005007d285a2cd3366c1297286b7f5b96a43ad`:
+Completed Shared Petalon foundations:
 
-- pinned `@supabase/supabase-js` dependency;
-- `.env.example` contract for `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`;
-- lazy browser Supabase client;
-- provider-neutral versioned shared-state repository contract with accepted/conflict/unavailable outcomes;
-- existing localStorage behavior verified unchanged.
+### Step 1 — merged
 
-Step 2 is implemented on PR #5 at head `96c169971b45719daa35b8e73de1e1d69163f885` and has been independently reviewed against the remote Supabase project:
+PR #3 / `85005007d285a2cd3366c1297286b7f5b96a43ad`:
 
-- dedicated Supabase project: `Beach Set Manager` / `uonovdnxfjqfjkhopxwg`;
-- KNO remains separate and untouched;
-- Supabase CLI pinned at 2.115.0;
-- reproducible migration for `locations`, `location_memberships`, and `location_state`;
-- Petalon location identity seeded as `00000000-0000-4000-8000-000000000001` without operational AppData;
-- RLS enabled on all application tables;
-- anon has no application-table privileges;
-- active membership is required for Petalon location/state access;
-- browser membership administration/role elevation is not allowed;
-- `location_state` client writes are limited to `state`, while revision/audit fields are trigger-owned;
-- stale expected-revision updates affect zero rows when the adapter uses the required `location_id + revision` predicate;
-- generated database types exist;
-- Supabase security advisor reports no issues;
-- authenticated no-membership access was verified as denied/empty;
-- anon access was verified denied.
+- pinned `@supabase/supabase-js`;
+- browser-safe public environment contract;
+- lazy Supabase client;
+- provider-neutral `SharedLocationStateRepository<T>` with accepted/conflict/unavailable results.
 
-The only current Supabase performance advisor notice is informational: `location_state_updated_by_idx` is unused so far. It is intentionally retained for future FK cleanup/query needs unless evidence later shows it is unnecessary.
+### Step 2 — merged
+
+PR #5:
+
+- dedicated Supabase project `Beach Set Manager` / `uonovdnxfjqfjkhopxwg`;
+- KNO separate and untouched;
+- migrations for `locations`, `location_memberships`, and versioned `location_state`;
+- Petalon location `00000000-0000-4000-8000-000000000001`;
+- RLS + explicit least-privilege grants;
+- active membership as the Petalon data-access boundary;
+- browser writes limited to `location_state.state`;
+- trigger-owned revision, `updated_at`, and `updated_by`;
+- stale expected-revision updates affect zero rows when the required `location_id + revision` filter is used;
+- generated database types.
+
+### Step 3 — implemented and independently reviewed, PR #6 pending merge
+
+PR #6 head `a8bb0073469ca2dcbd6d0275a03a6a0d7275ded3` adds one credential-safe PowerShell verification helper and uses the real development Auth identities:
+
+- Vuk: active `PLATFORM_OWNER` membership;
+- Vito: active `WORKER` membership;
+- Mark: active `WORKER` membership;
+- controlled non-operational `location_state` instead of importing Vuk's browser data;
+- real authenticated reads/writes verified for all three users;
+- accepted write advances revision exactly once;
+- stale expected revision affects zero rows and cannot overwrite newer state;
+- `updated_by` is stamped from the authenticated identity;
+- browser attempts to forge revision/`updated_by`/`updated_at` are denied;
+- same authenticated Vito session loses Petalon location/state access immediately when membership becomes inactive and regains access when reactivated;
+- worker membership administration, role elevation and location creation/deletion are denied;
+- credential-free verification report assertions passed 49/49;
+- KNO remains untouched.
+
+Live Supabase advisor state after Step 3 review:
+
+- security/RLS schema checks are clean;
+- one provider-level Auth warning remains: leaked-password protection is disabled;
+- one informational performance notice remains: `location_state_updated_by_idx` has not yet been used.
+
+The leaked-password warning is a hardening item, not a blocker for the current repository/RLS architecture. It should be enabled before broader production/commercial use unless product constraints justify otherwise.
 
 Still not implemented:
 
-- real Vuk/Vito/Mark Auth accounts;
-- active Petalon memberships for those three users;
-- active-member and inactive-membership revocation verification with real accounts;
-- controlled initial `location_state` seed;
 - Supabase-backed repository adapter;
-- switching live application persistence away from localStorage;
-- login/auth UI;
-- realtime shared updates.
+- live application persistence through Supabase;
+- login/auth UI in the React application;
+- realtime shared updates;
+- controlled migration of actual operational AppData.
 
 ## Immediate milestone
 
 **Shared Petalon v1** — Vuk, Vito and Mark can sign in, load the same Petalon state, make shared updates, see accepted changes, retain shared state after refresh, and be denied Petalon data when membership is inactive.
 
-## Immediate next action — Step 3
+## Immediate next action — Step 4
 
-Provision the three real development Auth identities for Vuk, Vito and Mark, attach all three to Petalon with active memberships, create one controlled initial `location_state`, and verify the RLS/revocation model with those real identities.
+Implement the Supabase-backed `SharedLocationStateRepository<T>` adapter only.
 
-Step 3 must prove at minimum:
+Step 4 must:
 
-- each active member can read the Petalon location and current state;
-- each active member can perform the intended revision-safe state update path;
-- a stale expected revision is classified as a conflict and does not overwrite newer state;
-- setting one membership `active=false` immediately blocks that user's subsequent Petalon location/state access;
-- reactivation restores access;
-- users cannot create/elevate memberships or modify audit/revision fields through the browser role;
-- KNO remains untouched.
+- use the existing lazy Supabase client and generated database types;
+- load `location_state` through RLS;
+- save with both `location_id` and `expectedRevision` in the update predicate;
+- treat exactly one returned row as `accepted`;
+- distinguish a stale zero-row update from unavailability and map it to the existing `conflict` result, retrieving current state if necessary without masking authorization/network failures;
+- keep provider response objects behind the repository boundary;
+- avoid letting callers accidentally perform an unconditional state overwrite;
+- add focused tests for accepted save, stale conflict, denied/unavailable behavior and mapping to the domain contract.
 
-The revision invariant is not considered complete at the application boundary until the Supabase repository adapter always includes the required expected-revision predicate. That adapter remains a later step after real-account RLS verification.
-
-Do not switch the production/live React persistence path in Step 3. The app remains localStorage-live until the account/RLS setup and controlled server state are reviewed.
+Do **not** switch `App.tsx` or the live application to this adapter in Step 4. The browser application remains localStorage-live until the adapter is independently reviewed.
 
 ## Deferred
 
