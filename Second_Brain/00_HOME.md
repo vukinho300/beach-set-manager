@@ -2,7 +2,7 @@
 
 Status: `canonical`
 Last reviewed: 2026-08-24
-Repository implementation checkpoint reviewed: `8680bf97a513457cffb7b61d75aa2e5a49c00d76`
+Repository implementation checkpoint reviewed: `96c169971b45719daa35b8e73de1e1d69163f885` (PR #5 head; pending merge to main)
 
 This vault is the human-readable control center for `beach-set-manager` as it evolves from a local-only Petalon PWA into a secure shared operational application.
 
@@ -12,9 +12,29 @@ This vault is the human-readable control center for `beach-set-manager` as it ev
 
 ## Current phase
 
-The current application is still a polished single-browser React/Vite/TypeScript PWA using browser `localStorage`. There is no Beach Set Manager Supabase project, login, shared database or multi-user synchronization implemented yet.
+The browser application is still operationally localStorage-based, but the shared-platform foundation and database/security foundation now exist.
 
-The immediate goal is deliberately narrow: make one Petalon deployment work securely for Vuk, Vito and Mark against one shared database.
+Implemented and merged in Step 1 / PR #3:
+
+- pinned `@supabase/supabase-js` browser dependency;
+- browser-safe Supabase environment contract using project URL + publishable key only;
+- lazy Supabase client creation with no live startup request;
+- provider-neutral versioned shared-state repository contract.
+
+Implemented in Step 2 / PR #5 and independently reviewed against the dedicated remote Supabase project:
+
+- dedicated `Beach Set Manager` Supabase project `uonovdnxfjqfjkhopxwg` (separate from KNO);
+- project-scoped Supabase CLI 2.115.0;
+- repository migration for `locations`, `location_memberships`, and `location_state`;
+- deterministic Petalon location identity `00000000-0000-4000-8000-000000000001`;
+- RLS and least-privilege grants using active location membership as the data-access boundary;
+- revision-safe shared-state updates using `location_id + expectedRevision`, with trigger-owned revision/audit fields;
+- generated Supabase TypeScript database types;
+- clean Supabase security advisor result and verified anon/no-membership denial paths.
+
+No Vuk/Vito/Mark Auth accounts, live Supabase application persistence, login UI, or realtime synchronization are implemented yet.
+
+The immediate goal remains deliberately narrow: make one Petalon deployment work securely for Vuk, Vito and Mark against one shared database.
 
 ## Main navigation
 
@@ -51,11 +71,13 @@ The immediate goal is deliberately narrow: make one Petalon deployment work secu
 
 Build **Shared Petalon v1**:
 
+- dedicated Beach Set Manager Supabase project;
 - Supabase Auth accounts for Vuk, Vito and Mark;
 - one Petalon location;
 - one shared database-backed application state;
 - Row Level Security on every exposed application table;
 - active location membership as the access/revocation boundary;
+- revision-checked shared state so stale writes cannot silently overwrite newer data;
 - realtime or equivalent refresh behavior so all three users see accepted changes;
 - no device/session-seat enforcement;
 - no offline write queue;
