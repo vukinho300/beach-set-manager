@@ -1,0 +1,39 @@
+export type SharedLocationState<T> = {
+  locationId: string;
+  state: T;
+  revision: number;
+  updatedAt: string;
+  updatedBy?: string;
+};
+
+export type SharedStateRepositoryError = {
+  message: string;
+  retryable: boolean;
+};
+
+export type LoadSharedLocationStateResult<T> =
+  | { status: 'found'; value: SharedLocationState<T> }
+  | { status: 'not-found' }
+  | { status: 'unavailable'; error: SharedStateRepositoryError };
+
+export type SaveSharedLocationStateResult<T> =
+  | { status: 'accepted'; value: SharedLocationState<T> }
+  | { status: 'conflict'; current: SharedLocationState<T> | null }
+  | { status: 'unavailable'; error: SharedStateRepositoryError };
+
+export type SharedLocationStateListener<T> = (value: SharedLocationState<T>) => void;
+export type Unsubscribe = () => void;
+
+/**
+ * Application-facing contract for future versioned shared location state.
+ * Implementations deliberately hide transport/provider response objects.
+ */
+export interface SharedLocationStateRepository<T> {
+  load(locationId: string): Promise<LoadSharedLocationStateResult<T>>;
+  save(
+    locationId: string,
+    expectedRevision: number,
+    nextState: T,
+  ): Promise<SaveSharedLocationStateResult<T>>;
+  subscribe(locationId: string, listener: SharedLocationStateListener<T>): Unsubscribe;
+}
