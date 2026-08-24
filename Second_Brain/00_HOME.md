@@ -2,7 +2,7 @@
 
 Status: `canonical`
 Last reviewed: 2026-08-24
-Repository implementation checkpoint reviewed: `8680bf97a513457cffb7b61d75aa2e5a49c00d76`
+Repository implementation checkpoint reviewed: `85005007d285a2cd3366c1297286b7f5b96a43ad`
 
 This vault is the human-readable control center for `beach-set-manager` as it evolves from a local-only Petalon PWA into a secure shared operational application.
 
@@ -12,9 +12,16 @@ This vault is the human-readable control center for `beach-set-manager` as it ev
 
 ## Current phase
 
-The current application is still a polished single-browser React/Vite/TypeScript PWA using browser `localStorage`. There is no Beach Set Manager Supabase project, login, shared database or multi-user synchronization implemented yet.
+The current application is still operationally localStorage-based, but the first shared-platform code foundation is now implemented and merged:
 
-The immediate goal is deliberately narrow: make one Petalon deployment work securely for Vuk, Vito and Mark against one shared database.
+- pinned `@supabase/supabase-js` browser dependency;
+- browser-safe Supabase environment contract using project URL + publishable key only;
+- lazy Supabase client creation with no live startup request;
+- provider-neutral versioned shared-state repository contract.
+
+No Beach Set Manager Supabase project, Auth accounts, database schema, RLS policies or live shared persistence are implemented yet.
+
+The immediate goal remains deliberately narrow: make one Petalon deployment work securely for Vuk, Vito and Mark against one shared database.
 
 ## Main navigation
 
@@ -51,11 +58,13 @@ The immediate goal is deliberately narrow: make one Petalon deployment work secu
 
 Build **Shared Petalon v1**:
 
+- dedicated Beach Set Manager Supabase project;
 - Supabase Auth accounts for Vuk, Vito and Mark;
 - one Petalon location;
 - one shared database-backed application state;
 - Row Level Security on every exposed application table;
 - active location membership as the access/revocation boundary;
+- revision-checked shared state so stale writes cannot silently overwrite newer data;
 - realtime or equivalent refresh behavior so all three users see accepted changes;
 - no device/session-seat enforcement;
 - no offline write queue;
