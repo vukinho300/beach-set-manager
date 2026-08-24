@@ -1,8 +1,8 @@
 # Beach Management Platform — Second Brain
 
 Status: `canonical`
-Last reviewed: 2026-08-24
-Repository implementation checkpoint reviewed: `96c169971b45719daa35b8e73de1e1d69163f885` (PR #5 head; pending merge to main)
+Last reviewed: 2026-08-25
+Repository implementation checkpoint reviewed: `a8bb0073469ca2dcbd6d0275a03a6a0d7275ded3` (PR #6 head; pending merge to main)
 
 This vault is the human-readable control center for `beach-set-manager` as it evolves from a local-only Petalon PWA into a secure shared operational application.
 
@@ -12,29 +12,17 @@ This vault is the human-readable control center for `beach-set-manager` as it ev
 
 ## Current phase
 
-The browser application is still operationally localStorage-based, but the shared-platform foundation and database/security foundation now exist.
+The browser application is still operationally localStorage-based, but the shared-platform, database/security and real-account authorization foundations now exist.
 
-Implemented and merged in Step 1 / PR #3:
+Completed foundation:
 
-- pinned `@supabase/supabase-js` browser dependency;
-- browser-safe Supabase environment contract using project URL + publishable key only;
-- lazy Supabase client creation with no live startup request;
-- provider-neutral versioned shared-state repository contract.
+- Step 1 / PR #3: browser Supabase dependency/environment contract, lazy client and provider-neutral versioned shared-state repository contract.
+- Step 2 / PR #5: dedicated `Beach Set Manager` Supabase project `uonovdnxfjqfjkhopxwg`, migrations for `locations`, `location_memberships` and `location_state`, RLS/least-privilege grants, deterministic Petalon identity, generated database types and revision-safe conditional writes.
+- Step 3 / PR #6: real Auth identities for Vuk, Vito and Mark, active Petalon memberships, controlled non-operational initial state and credential-safe authenticated verification proving active-member access, stale-write rejection, trigger-owned audit fields, same-session membership revocation/restoration and worker privilege denials.
 
-Implemented in Step 2 / PR #5 and independently reviewed against the dedicated remote Supabase project:
+KNO remains separate and untouched. The React application has not yet been switched to Supabase persistence and still has no login UI or realtime synchronization.
 
-- dedicated `Beach Set Manager` Supabase project `uonovdnxfjqfjkhopxwg` (separate from KNO);
-- project-scoped Supabase CLI 2.115.0;
-- repository migration for `locations`, `location_memberships`, and `location_state`;
-- deterministic Petalon location identity `00000000-0000-4000-8000-000000000001`;
-- RLS and least-privilege grants using active location membership as the data-access boundary;
-- revision-safe shared-state updates using `location_id + expectedRevision`, with trigger-owned revision/audit fields;
-- generated Supabase TypeScript database types;
-- clean Supabase security advisor result and verified anon/no-membership denial paths.
-
-No Vuk/Vito/Mark Auth accounts, live Supabase application persistence, login UI, or realtime synchronization are implemented yet.
-
-The immediate goal remains deliberately narrow: make one Petalon deployment work securely for Vuk, Vito and Mark against one shared database.
+The current implementation target is Step 4: implement the Supabase-backed repository adapter behind the existing `SharedLocationStateRepository<T>` boundary. Step 4 must make the required `location_id + expectedRevision` predicate unavoidable and correctly classify zero-row stale writes as `conflict`, while leaving the live app localStorage-based until the adapter itself is reviewed.
 
 ## Main navigation
 
