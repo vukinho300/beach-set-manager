@@ -13,6 +13,7 @@ Status: `canonical`
 - [ ] End every project response with a **Second Brain Changes** section.
 - [ ] Keep the repository/database as technical source of truth and the Second Brain as project memory/control manual.
 - [ ] ChatGPT owns Second Brain maintenance. Codex must not edit `Second_Brain/` unless Vuk explicitly requests that exception.
+- [ ] Every Codex prompt produced by ChatGPT must state the recommended Codex model and reasoning level for that specific task. Choose according to task complexity; do not automatically use maximum compute for trivial work.
 - [ ] Codex normally works through the local terminal/CLI from inside the repository so it can inspect the exact checkout, run real commands and create focused branches/PRs.
 - [ ] Prefer the cheapest reliable verification path. If a short manual action by Vuk is simpler, faster or clearer than agent automation, ask Vuk to do that action instead of spending tokens automating it.
 - [ ] Do not let Codex loop on blocked credentials, browser-only approval flows or flaky external tooling. After at most two sensible attempts at the same external/tooling blocker, stop and hand Vuk one exact manual action to perform, then resume from the verified result.
@@ -26,7 +27,7 @@ Product owner, final decision-maker and approval authority. Vuk defines the prod
 
 ### ChatGPT
 
-Architecture, security/product design, research, repository review, Second Brain maintenance and Codex prompt design. ChatGPT should simplify the implementation path where possible, inspect Codex's actual changes before approving them, and keep the Second Brain synchronized with accepted project state. ChatGPT should explicitly choose between Codex automation and a short Vuk manual action based on reliability and cost.
+Architecture, security/product design, research, repository review, Second Brain maintenance and Codex prompt design. ChatGPT should simplify the implementation path where possible, inspect Codex's actual changes before approving them, and keep the Second Brain synchronized with accepted project state. ChatGPT should explicitly choose between Codex automation and a short Vuk manual action based on reliability and cost, and choose an appropriate Codex model/reasoning level for each prompt.
 
 ### Codex
 
