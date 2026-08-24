@@ -5,12 +5,12 @@ Status: `prototype_decision`
 ## Shared Petalon v1 — current track
 
 1. ✅ Completed — add the minimal Supabase browser/client and shared-state repository foundation while keeping current local behavior unchanged. Merged in PR #3 at `85005007d285a2cd3366c1297286b7f5b96a43ad`.
-2. **Current step** — create a dedicated Beach Set Manager Supabase development project and link the local repository to it.
-3. In the same database-foundation step, add repository migrations for `locations`, `location_memberships` and a versioned `location_state` JSONB record; enable required grants and RLS, and implement revision-safe state writes.
-4. Independently verify the schema/security foundation: no anon data access, authenticated users without active membership cannot access Petalon data, membership predicates are enforced by RLS, and stale expected revisions cannot silently overwrite newer state.
-5. Create/authenticate Vuk, Vito and Mark and attach all three to Petalon with active memberships.
-6. Seed Petalon using controlled development state, not an automatic upload of Vuk's working browser data.
-7. Implement the Supabase-backed repository adapter and switch application load/save for the shared state behind the existing repository boundary.
+2. ✅ Completed — create a dedicated Beach Set Manager Supabase project and link the repository to it. Dedicated project: `uonovdnxfjqfjkhopxwg`; KNO remains separate and untouched.
+3. ✅ Completed — add repository migrations for `locations`, `location_memberships` and versioned `location_state` JSONB; enable required grants/RLS; establish trigger-owned revision/audit fields and revision-safe conditional updates. Implemented in PR #5 at head `96c169971b45719daa35b8e73de1e1d69163f885` pending merge.
+4. ✅ Completed for current foundation scope — independently verify no anon access, no-membership denial, security advisor cleanliness, migration parity, and stale revision non-overwrite behavior. Active-member/revocation tests remain intentionally deferred until real accounts exist.
+5. **Current step — Step 3:** create/authenticate Vuk, Vito and Mark, attach all three to Petalon with active memberships, create controlled initial `location_state`, and verify active-member reads/writes plus inactive-membership revocation using real identities.
+6. Implement the Supabase-backed repository adapter so every save uses `location_id + expectedRevision` and reliably maps zero-row stale updates to the existing `conflict` result.
+7. Switch application load/save for shared state behind the existing repository boundary, keeping migration/fallback behavior deliberate and avoiding automatic upload of Vuk's working browser data.
 8. Add realtime subscription or simple invalidation/reload so the three clients converge on accepted server state.
 9. Verify from separate sessions/devices: shared reads, shared writes, refresh persistence, conflict behavior, no anon access, no-member denial and membership revocation.
 10. Add user-specific UI/permission differences only where the real Petalon workflow requires them.
