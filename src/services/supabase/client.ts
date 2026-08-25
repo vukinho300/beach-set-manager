@@ -27,7 +27,13 @@ export function getSupabaseClient(): SupabaseClient<Database> | null {
     return client;
   }
 
-  client = createClient<Database>(configuration.url, configuration.publishableKey);
+  client = createClient<Database>(configuration.url, configuration.publishableKey, {
+    auth: {
+      autoRefreshToken: true,
+      persistSession: true,
+      detectSessionInUrl: false,
+    },
+  });
   return client;
 }
 
