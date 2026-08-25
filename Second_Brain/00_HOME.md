@@ -1,8 +1,8 @@
 # Beach Management Platform — Second Brain
 
 Status: `canonical`
-Last reviewed: 2026-08-25
-Repository implementation checkpoint reviewed: `210665d25f32ededab9b6b05f13374dfec587acd` (PR #8 head; pending merge to main)
+Last reviewed: 2026-08-26
+Repository implementation checkpoint reviewed: `cebdaa2024e3d129d296d952ae20e61d4d0bbfe6` (PR #10 head; pending merge to main)
 
 This vault is the human-readable control center for `beach-set-manager` as it evolves from a local-only Petalon PWA into a secure shared operational application.
 
@@ -12,18 +12,19 @@ This vault is the human-readable control center for `beach-set-manager` as it ev
 
 ## Current phase
 
-The browser application is still operationally localStorage-based, but the shared-platform, database/security, real-account authorization and Supabase repository-adapter foundations now exist.
+The shared-platform, database/RLS, real-account authorization, repository-adapter and browser Auth/session foundations now exist. The React application is still operationally `localStorage`-backed; Step 6 is the first step that will move operational truth to Supabase.
 
 Completed foundation:
 
 - Step 1 / PR #3: browser Supabase dependency/environment contract, lazy client and provider-neutral versioned shared-state repository contract.
 - Step 2 / PR #5: dedicated `Beach Set Manager` Supabase project `uonovdnxfjqfjkhopxwg`, migrations for `locations`, `location_memberships` and `location_state`, RLS/least-privilege grants, deterministic Petalon identity, generated database types and revision-safe conditional writes.
-- Step 3 / PR #6: real Auth identities for Vuk, Vito and Mark, active Petalon memberships, controlled non-operational initial state and credential-safe authenticated verification proving active-member access, stale-write rejection, trigger-owned audit fields, same-session membership revocation/restoration and worker privilege denials.
-- Step 4 / PR #8: typed Supabase-backed `SharedLocationStateRepository<T>` adapter with RLS-aware load classification, mandatory `location_id + expectedRevision` conditional saves, stale-conflict classification, provider-safe errors, generated database types and focused tests. The adapter is not yet wired into `App.tsx`.
+- Step 3 / PR #6: real Auth identities for Vuk, Vito and Mark, active Petalon memberships, controlled non-operational initial state and authenticated verification proving active-member access, stale-write rejection, trigger-owned audit fields, same-session membership revocation/restoration and worker privilege denials.
+- Step 4 / PR #8: typed Supabase-backed `SharedLocationStateRepository<T>` adapter with RLS-aware load classification, mandatory `location_id + expectedRevision` saves, conflict classification and focused tests.
+- Step 5 / PR #10: minimal browser email/password authentication and session UX. It restores Supabase sessions across refresh, gates the existing operational app behind authentication, supports local sign-out, has no signup path, and preserves existing localStorage operational behavior. Vuk manually verified login with all three real accounts, refresh persistence and sign-out/re-login.
 
-KNO remains separate and untouched. The React application has not yet been switched to Supabase persistence and still has no login UI or realtime synchronization.
+KNO remains separate and untouched. Realtime is not implemented yet. Operational AppData has not yet been migrated or uploaded to Supabase.
 
-The next dependency is minimal browser Auth/session UX. Because the verified Supabase persistence path is protected by RLS, the application must first establish a real authenticated browser session before live operational persistence can safely be switched from localStorage to Supabase. After Auth/session UX is reviewed, the following step will wire the existing adapter into application load/save with deliberate initial-state behavior.
+The current implementation target is Step 6: switch authenticated application load/save from browser localStorage to the reviewed Supabase shared-state repository with explicit controlled initial operational state, revision-aware saves and safe failure/conflict behavior. Do not automatically upload Vuk's existing browser data.
 
 ## Main navigation
 
