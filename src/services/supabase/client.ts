@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import type { Database } from './database.types';
 
-let client: SupabaseClient | null | undefined;
+let client: SupabaseClient<Database> | null | undefined;
 
 function getSupabaseConfiguration() {
   const url = import.meta.env.VITE_SUPABASE_URL?.trim();
@@ -14,7 +15,7 @@ function getSupabaseConfiguration() {
  * are configured. Calling this function only constructs the client; it does
  * not issue a request. The current local-only app does not call it.
  */
-export function getSupabaseClient(): SupabaseClient | null {
+export function getSupabaseClient(): SupabaseClient<Database> | null {
   if (client !== undefined) {
     return client;
   }
@@ -26,7 +27,7 @@ export function getSupabaseClient(): SupabaseClient | null {
     return client;
   }
 
-  client = createClient(configuration.url, configuration.publishableKey);
+  client = createClient<Database>(configuration.url, configuration.publishableKey);
   return client;
 }
 
