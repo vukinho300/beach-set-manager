@@ -10,7 +10,7 @@ Completed Shared Petalon foundations:
 
 ### Step 1 — merged
 
-PR #3 / `85005007d285a2cd3366c1297286b7f5b96a43ad`:
+PR #3:
 
 - pinned `@supabase/supabase-js`;
 - browser-safe public environment contract;
@@ -29,63 +29,76 @@ PR #5:
 - active membership as the Petalon data-access boundary;
 - browser writes limited to `location_state.state`;
 - trigger-owned revision, `updated_at`, and `updated_by`;
-- stale expected-revision updates affect zero rows when the required `location_id + revision` filter is used;
 - generated database types.
 
-### Step 3 — implemented and independently reviewed, PR #6 pending merge
+### Step 3 — merged
 
-PR #6 head `a8bb0073469ca2dcbd6d0275a03a6a0d7275ded3` adds one credential-safe PowerShell verification helper and uses the real development Auth identities:
+PR #6:
 
-- Vuk: active `PLATFORM_OWNER` membership;
-- Vito: active `WORKER` membership;
-- Mark: active `WORKER` membership;
-- controlled non-operational `location_state` instead of importing Vuk's browser data;
-- real authenticated reads/writes verified for all three users;
-- accepted write advances revision exactly once;
-- stale expected revision affects zero rows and cannot overwrite newer state;
-- `updated_by` is stamped from the authenticated identity;
-- browser attempts to forge revision/`updated_by`/`updated_at` are denied;
-- same authenticated Vito session loses Petalon location/state access immediately when membership becomes inactive and regains access when reactivated;
-- worker membership administration, role elevation and location creation/deletion are denied;
+- real Auth identities for Vuk, Vito and Mark;
+- Vuk active `PLATFORM_OWNER`; Vito and Mark active `WORKER`;
+- controlled non-operational `location_state` instead of browser data import;
+- authenticated reads/writes verified for all three;
+- stale expected revision cannot overwrite newer state;
+- trigger-owned audit fields verified;
+- same-session inactive-membership revocation/restoration verified;
+- worker privilege escalation and membership/location administration denied;
 - credential-free verification report assertions passed 49/49;
-- KNO remains untouched.
+- KNO untouched.
 
-Live Supabase advisor state after Step 3 review:
+### Step 4 — implemented and independently reviewed, PR #8 pending merge
 
-- security/RLS schema checks are clean;
-- one provider-level Auth warning remains: leaked-password protection is disabled;
-- one informational performance notice remains: `location_state_updated_by_idx` has not yet been used.
+PR #8 head `210665d25f32ededab9b6b05f13374dfec587acd`:
 
-The leaked-password warning is a hardening item, not a blocker for the current repository/RLS architecture. It should be enabled before broader production/commercial use unless product constraints justify otherwise.
+- typed Supabase-backed `SharedLocationStateRepository<T>` adapter;
+- generated `Database` types used by the browser client;
+- load distinguishes visible state, active-member missing state, and inaccessible/revoked state;
+- save always sends only `state` and always filters by both `location_id` and `expectedRevision`;
+- one returned row maps to `accepted`;
+- zero-row writes are classified with an RLS-protected follow-up read so stale state becomes `conflict` while revoked/network/authorization cases remain `unavailable`;
+- disappearing state with an active membership maps to `conflict` with `current: null`;
+- no unconditional state-overwrite path exists in the adapter;
+- realtime remains intentionally deferred through a stable no-op subscription;
+- focused Vitest coverage passes 11/11;
+- `npm run build`, `npm test`, and `git diff --check` pass;
+- no `App.tsx`, schema, Vercel, CSS, realtime, credential, or operational persistence changes.
+
+Current Supabase advisor state:
+
+- provider-level Auth warning: leaked-password protection disabled;
+- informational performance notice: `location_state_updated_by_idx` currently unused.
+
+These do not block the current Shared Petalon implementation track. Leaked-password protection remains a hardening item before broader production/commercial use.
 
 Still not implemented:
 
-- Supabase-backed repository adapter;
-- live application persistence through Supabase;
-- login/auth UI in the React application;
-- realtime shared updates;
-- controlled migration of actual operational AppData.
+- browser login/session UX;
+- live application persistence through the reviewed Supabase adapter;
+- controlled initial operational AppData migration/seed;
+- realtime shared updates.
 
 ## Immediate milestone
 
 **Shared Petalon v1** — Vuk, Vito and Mark can sign in, load the same Petalon state, make shared updates, see accepted changes, retain shared state after refresh, and be denied Petalon data when membership is inactive.
 
-## Immediate next action — Step 4
+## Immediate next action — Step 5
 
-Implement the Supabase-backed `SharedLocationStateRepository<T>` adapter only.
+Implement the minimal email/password browser authentication and session UX required for Vuk, Vito and Mark.
 
-Step 4 must:
+This sequencing is intentional: the verified shared-state adapter reads/writes RLS-protected tables and therefore needs a real authenticated browser session before the application can safely switch live operational persistence away from localStorage.
 
-- use the existing lazy Supabase client and generated database types;
-- load `location_state` through RLS;
-- save with both `location_id` and `expectedRevision` in the update predicate;
-- treat exactly one returned row as `accepted`;
-- distinguish a stale zero-row update from unavailability and map it to the existing `conflict` result, retrieving current state if necessary without masking authorization/network failures;
-- keep provider response objects behind the repository boundary;
-- avoid letting callers accidentally perform an unconditional state overwrite;
-- add focused tests for accepted save, stale conflict, denied/unavailable behavior and mapping to the domain contract.
+Step 5 should:
 
-Do **not** switch `App.tsx` or the live application to this adapter in Step 4. The browser application remains localStorage-live until the adapter is independently reviewed.
+- use the existing Supabase browser client;
+- provide minimal email/password sign-in and sign-out;
+- restore an existing Supabase session on refresh;
+- expose a small provider-neutral Auth/session boundary to application code where useful instead of spreading Supabase response objects throughout the UI;
+- clearly represent loading, authenticated and unauthenticated states;
+- ensure a revoked/inactive membership is not treated as an authentication failure; membership access remains a database/RLS concern;
+- keep the existing operational application on localStorage after authentication succeeds;
+- add focused Auth/session tests without storing real passwords or tokens.
+
+Do **not** switch `App.tsx` load/save to Supabase in Step 5. That is the next step after browser Auth/session behavior is independently reviewed.
 
 ## Deferred
 
