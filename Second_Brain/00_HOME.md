@@ -2,7 +2,7 @@
 
 Status: `canonical`
 Last reviewed: 2026-08-25
-Repository implementation checkpoint reviewed: `a8bb0073469ca2dcbd6d0275a03a6a0d7275ded3` (PR #6 head; pending merge to main)
+Repository implementation checkpoint reviewed: `210665d25f32ededab9b6b05f13374dfec587acd` (PR #8 head; pending merge to main)
 
 This vault is the human-readable control center for `beach-set-manager` as it evolves from a local-only Petalon PWA into a secure shared operational application.
 
@@ -12,17 +12,18 @@ This vault is the human-readable control center for `beach-set-manager` as it ev
 
 ## Current phase
 
-The browser application is still operationally localStorage-based, but the shared-platform, database/security and real-account authorization foundations now exist.
+The browser application is still operationally localStorage-based, but the shared-platform, database/security, real-account authorization and Supabase repository-adapter foundations now exist.
 
 Completed foundation:
 
 - Step 1 / PR #3: browser Supabase dependency/environment contract, lazy client and provider-neutral versioned shared-state repository contract.
 - Step 2 / PR #5: dedicated `Beach Set Manager` Supabase project `uonovdnxfjqfjkhopxwg`, migrations for `locations`, `location_memberships` and `location_state`, RLS/least-privilege grants, deterministic Petalon identity, generated database types and revision-safe conditional writes.
 - Step 3 / PR #6: real Auth identities for Vuk, Vito and Mark, active Petalon memberships, controlled non-operational initial state and credential-safe authenticated verification proving active-member access, stale-write rejection, trigger-owned audit fields, same-session membership revocation/restoration and worker privilege denials.
+- Step 4 / PR #8: typed Supabase-backed `SharedLocationStateRepository<T>` adapter with RLS-aware load classification, mandatory `location_id + expectedRevision` conditional saves, stale-conflict classification, provider-safe errors, generated database types and focused tests. The adapter is not yet wired into `App.tsx`.
 
 KNO remains separate and untouched. The React application has not yet been switched to Supabase persistence and still has no login UI or realtime synchronization.
 
-The current implementation target is Step 4: implement the Supabase-backed repository adapter behind the existing `SharedLocationStateRepository<T>` boundary. Step 4 must make the required `location_id + expectedRevision` predicate unavoidable and correctly classify zero-row stale writes as `conflict`, while leaving the live app localStorage-based until the adapter itself is reviewed.
+The next dependency is minimal browser Auth/session UX. Because the verified Supabase persistence path is protected by RLS, the application must first establish a real authenticated browser session before live operational persistence can safely be switched from localStorage to Supabase. After Auth/session UX is reviewed, the following step will wire the existing adapter into application load/save with deliberate initial-state behavior.
 
 ## Main navigation
 
