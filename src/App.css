@@ -4443,3 +4443,170 @@ button.existing-reservation-option {
   }
 }
 /* PETALON VISUAL-QA REFINEMENTS END */
+
+/* SHARED PETALON AUTH START */
+.auth-shell {
+  width: 100%;
+  min-height: 100vh;
+  min-height: 100svh;
+  display: grid;
+  place-items: center;
+  padding: max(20px, env(safe-area-inset-top)) 16px max(20px, env(safe-area-inset-bottom));
+  overflow-x: hidden;
+}
+
+.auth-card {
+  width: min(100%, 420px);
+  display: grid;
+  gap: 22px;
+  padding: 24px;
+  border: 1px solid rgba(23, 32, 42, 0.14);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 20px 50px rgba(32, 79, 96, 0.16);
+}
+
+.auth-card-header {
+  display: grid;
+  gap: 7px;
+}
+
+.auth-card-header h1,
+.auth-status-card h1 {
+  font-size: clamp(1.55rem, 7vw, 2rem);
+  line-height: 1.08;
+}
+
+.auth-card-header > p:last-child,
+.auth-status-card > p:last-child {
+  margin: 2px 0 0;
+  color: #53636f;
+  line-height: 1.45;
+}
+
+.auth-form,
+.auth-field {
+  display: grid;
+}
+
+.auth-form {
+  gap: 16px;
+}
+
+.auth-field {
+  gap: 7px;
+  min-width: 0;
+}
+
+.auth-field span {
+  color: #263744;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.auth-field input {
+  width: 100%;
+  min-width: 0;
+  min-height: 48px;
+  padding: 0 12px;
+  color: #17202a;
+  font: inherit;
+  border: 1px solid #b9c8d1;
+  border-radius: 9px;
+  outline: 0;
+  background: #ffffff;
+}
+
+.auth-field input:focus {
+  border-color: #087e73;
+  box-shadow: 0 0 0 3px rgba(8, 126, 115, 0.16);
+}
+
+.auth-field input:disabled {
+  color: #66727d;
+  background: #f2f5f6;
+}
+
+.auth-submit,
+.sign-out-button {
+  min-height: 48px;
+  padding: 0 16px;
+  font: inherit;
+  font-weight: 850;
+  border-radius: 9px;
+}
+
+.auth-submit {
+  color: #ffffff;
+  border: 1px solid #087e73;
+  background: #087e73;
+  box-shadow: 0 8px 18px rgba(8, 126, 115, 0.2);
+}
+
+.auth-submit:disabled,
+.sign-out-button:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
+.auth-error {
+  margin: 0;
+  padding: 10px 11px;
+  color: #8c172b;
+  font-size: 0.82rem;
+  font-weight: 750;
+  line-height: 1.4;
+  border: 1px solid #efb4bf;
+  border-radius: 8px;
+  background: #fff0f3;
+}
+
+.auth-status-card {
+  justify-items: center;
+  text-align: center;
+}
+
+.auth-spinner {
+  width: 34px;
+  height: 34px;
+  border: 4px solid #d7e7e6;
+  border-top-color: #087e73;
+  border-radius: 50%;
+  animation: auth-spin 0.8s linear infinite;
+}
+
+.settings-account p strong {
+  overflow-wrap: anywhere;
+  color: #263744;
+}
+
+.sign-out-button {
+  width: 100%;
+  color: #8c172b;
+  border: 1px solid #e3a9b4;
+  background: #fff0f3;
+}
+
+.settings-auth-error {
+  margin-top: 2px;
+}
+
+@keyframes auth-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 420px) {
+  .auth-shell {
+    align-items: start;
+    padding-inline: 12px;
+    padding-top: max(48px, env(safe-area-inset-top));
+  }
+
+  .auth-card {
+    padding: 20px 16px;
+    border-radius: 12px;
+  }
+}
+/* SHARED PETALON AUTH END */

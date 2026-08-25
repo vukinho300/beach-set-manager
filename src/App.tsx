@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { MutableRefObject } from 'react';
+import { AuthStatusPage, LoginPage } from './components/auth/LoginPage';
+import type { AuthenticatedUser } from './services/auth/authService';
+import { useAuthSession } from './services/auth/useAuthSession';
 import './App.css';
 
 type SetStatus = 'free' | 'paid' | 'reserved' | 'left';
@@ -1597,7 +1600,17 @@ function createBackupPayload(appData: AppData): BackupPayload {
   };
 }
 
-function App() {
+function OperationalApp({
+  authenticatedUser,
+  authActionError,
+  signOutPending,
+  onSignOut,
+}: {
+  authenticatedUser: AuthenticatedUser;
+  authActionError: string | null;
+  signOutPending: boolean;
+  onSignOut: () => Promise<void>;
+}) {
   const initialAppData = useMemo(() => initializeAppDataForToday(loadSavedAppData()), []);
   const [sets, setSets] = useState<BeachSetMap>(() => initialAppData.sets);
   const [extraBeds, setExtraBeds] = useState<ExtraBedMap>(() => initialAppData.extraBeds);
@@ -2393,6 +2406,10 @@ function App() {
           transactions={transactions}
           reportArchive={reportArchive}
           onDeleteTransaction={deleteTransaction}
+          authenticatedUser={authenticatedUser}
+          authActionError={authActionError}
+          signOutPending={signOutPending}
+          onSignOut={onSignOut}
         />
       ) : (
         <>
@@ -3458,7 +3475,7 @@ function BeachShortcuts({ onSelect }: { onSelect: (section: BeachShortcut) => vo
   </nav>;
 }
 
-function SettingsPage({ view, backupMessage, importInputRef, savedSurnames, onDailyReset, onExport, onImport, onImportFile, onResetAppData, onDeleteSurname, onShowTransactions, onShowReport, onBackToSettings, transactions, reportArchive, onDeleteTransaction }: {
+function SettingsPage({ view, backupMessage, importInputRef, savedSurnames, onDailyReset, onExport, onImport, onImportFile, onResetAppData, onDeleteSurname, onShowTransactions, onShowReport, onBackToSettings, transactions, reportArchive, onDeleteTransaction, authenticatedUser, authActionError, signOutPending, onSignOut }: {
   view: SettingsView;
   backupMessage: string | null;
   importInputRef: MutableRefObject<HTMLInputElement | null>;
@@ -3475,6 +3492,10 @@ function SettingsPage({ view, backupMessage, importInputRef, savedSurnames, onDa
   transactions: Transaction[];
   reportArchive: ArchivedDailyReport[];
   onDeleteTransaction: (transactionId: string) => void;
+  authenticatedUser: AuthenticatedUser;
+  authActionError: string | null;
+  signOutPending: boolean;
+  onSignOut: () => Promise<void>;
 }) {
   if (view === 'transactions') {
     return <section className="settings-subpage"><button type="button" className="settings-back" onClick={onBackToSettings}>Back to Settings</button><TransactionsPage transactions={transactions} onDelete={onDeleteTransaction} /></section>;
@@ -3488,6 +3509,7 @@ function SettingsPage({ view, backupMessage, importInputRef, savedSurnames, onDa
     <section className="settings-section"><h3>Daily Reset</h3><p>Start a fresh local business day and clear current-day sales.</p><button type="button" className="reset-button" onClick={onDailyReset}>Daily Reset</button></section>
     <section className="settings-section"><h3>Backups</h3><p>Saved locally on this device. Other phones have separate data.</p><div className="tool-buttons"><button type="button" className="tool-button" onClick={onExport}>Export Backup</button><button type="button" className="tool-button" onClick={onImport}>Import Backup</button></div><input ref={importInputRef} className="file-input" type="file" accept="application/json,.json" onChange={(event) => onImportFile(event.target.files?.[0])} />{backupMessage ? <p className="backup-message">{backupMessage}</p> : null}</section>
     <section className="settings-section"><h3>Local Tools</h3><button type="button" className="danger-link" onClick={onResetAppData}>Reset app data</button><SavedSurnamesManager savedSurnames={savedSurnames} onDeleteSurname={onDeleteSurname} /></section>
+    <section className="settings-section settings-account"><h3>Account</h3><p>Signed in as <strong>{authenticatedUser.email || 'Authenticated user'}</strong></p><button type="button" className="sign-out-button" disabled={signOutPending} onClick={() => void onSignOut()}>{signOutPending ? 'Signing out…' : 'Sign out'}</button>{authActionError ? <p className="auth-error settings-auth-error" role="alert">{authActionError}</p> : null}</section>
     <section className="settings-about" aria-label="About"><span>About</span><strong>Built for Camp Petalon</strong></section>
   </section>;
 }
@@ -4290,6 +4312,48 @@ function BedIcon() {
       <span className="bed-pillow" />
       <span className="bed-frame" />
     </span>
+  );
+}
+
+function App() {
+  const auth = useAuthSession();
+
+  if (auth.state.status === 'initializing') {
+    return (
+      <AuthStatusPage
+        title="Starting securely"
+        message="Restoring your session…"
+        loading
+      />
+    );
+  }
+
+  if (auth.state.status === 'unavailable') {
+    return (
+      <AuthStatusPage
+        title="Authentication unavailable"
+        message={auth.state.message}
+      />
+    );
+  }
+
+  if (auth.state.status === 'unauthenticated') {
+    return (
+      <LoginPage
+        error={auth.actionError}
+        submitting={auth.signingIn}
+        onSignIn={auth.signIn}
+      />
+    );
+  }
+
+  return (
+    <OperationalApp
+      authenticatedUser={auth.state.user}
+      authActionError={auth.actionError}
+      signOutPending={auth.signingOut}
+      onSignOut={auth.signOut}
+    />
   );
 }
 
