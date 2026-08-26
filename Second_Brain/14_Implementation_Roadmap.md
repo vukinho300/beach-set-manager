@@ -4,28 +4,40 @@ Status: `prototype_decision`
 
 ## Shared Petalon v1 — current track
 
-1. ✅ **Step 1 completed** — minimal Supabase browser/client and shared-state repository foundation while keeping current local behavior unchanged. Merged in PR #3.
-2. ✅ **Step 2 completed** — dedicated Beach Set Manager Supabase project, repository migrations for `locations`, `location_memberships` and versioned `location_state`, RLS/least-privilege grants, generated database types, Petalon identity and revision-safe conditional-write foundation. Merged in PR #5.
-3. ✅ **Step 3 completed** — real Vuk/Vito/Mark Auth identities and active Petalon memberships; controlled non-operational initial state; authenticated active-member reads/writes; stale-revision conflict proof; server-owned audit-field proof; same-session inactive-membership revocation/restoration; worker privilege-escalation denial. Merged in PR #6.
-4. ✅ **Step 4 completed** — Supabase-backed `SharedLocationStateRepository<T>` adapter with generated DB types, mandatory `location_id + expectedRevision` writes, accepted/conflict/unavailable classification, RLS-aware zero-row handling, and focused tests. Merged in PR #8.
-5. ✅ **Step 5 completed** — minimal browser email/password Auth/session UX for Vuk, Vito and Mark; session restoration, sign-out, controlled auth states and focused tests; manually verified with all three real accounts. Merged in PR #10.
-6. ✅ **Step 6 completed** — controlled clean Petalon operational seed; server-first authoritative Supabase AppData; no operational localStorage fallback; revision-tracked serialized/coalesced saves; conservative conflict/unavailable behavior; explicit backup/import/reset flow through the shared save path; cross-session Vuk/Vito verification; account-switch isolation bound to authenticated user/controller. Merged in PR #12.
-7. ✅ **Step 7 completed** — filtered realtime invalidation for the Petalon `location_state` row; authoritative reload through the existing repository; old/own revision suppression; save/pending/conflict safety; serialized/coalesced automatic convergence; user-scoped subscription cleanup; focused realtime publication migration; manual Vuk/Vito automatic convergence verified. Merged in PR #14.
-8. ✅ **Step 8 VERIFIED** — final real Vuk/Vito/Mark verification of login/session persistence, authoritative shared reads/writes, automatic realtime convergence, refresh persistence, stale-write conflict behavior, anonymous denial, live membership revocation/restoration, worker privilege protection, account-switch isolation and final clean Petalon state. No implementation changes were required. Final verified Petalon revision: `33`.
-9. **Current operational task — Production Phone Deployment Readiness:** configure and verify the Vercel Production deployment so the verified Shared Petalon v1 can be used from Vuk's phone. Ensure only browser-safe Supabase public configuration is present, redeploy current `main`, and verify production mobile login/session/shared-state/realtime behavior.
-10. Add user-specific owner/worker UI/permission differences only where the real Petalon workflow requires them and only after phone Production readiness is verified.
-11. Migrate/refine individual domains into normalized tables later only when JSONB shared state becomes an actual limitation.
+1. ✅ **Step 1 completed** — minimal Supabase browser/client and shared-state repository foundation. Merged in PR #3.
+2. ✅ **Step 2 completed** — dedicated Beach Set Manager Supabase project, `locations`, `location_memberships`, versioned `location_state`, RLS/least privilege, generated types and revision-safe writes. Merged in PR #5.
+3. ✅ **Step 3 completed** — real Vuk/Vito/Mark Auth identities, memberships, stale-write proof, audit ownership, revocation/restoration and worker privilege denials. Merged in PR #6.
+4. ✅ **Step 4 completed** — typed Supabase shared-state adapter with mandatory `location_id + expectedRevision`, conflict/unavailable classification and tests. Merged in PR #8.
+5. ✅ **Step 5 completed** — browser Auth/session UX with persisted session, sign-out and no public signup. Merged in PR #10.
+6. ✅ **Step 6 completed** — authoritative Supabase AppData, server-first load, no operational localStorage fallback, serialized/coalesced revision-safe saves, conservative conflict/unavailable behavior and account-switch isolation. Merged in PR #12.
+7. ✅ **Step 7 completed** — filtered realtime invalidation, background authoritative reload model, revision suppression, save/pending/conflict safety and user-scoped subscription cleanup. Merged in PR #14.
+8. ✅ **Step 8 VERIFIED** — real Vuk/Vito/Mark verification of Auth/session, shared reads/writes, realtime convergence, stale conflict protection, anonymous denial, live revocation/restoration, worker privilege protection and final clean state. No implementation changes required.
+9. ✅ **Production phone deployment configured/working enough to expose real workflow evidence** — production public Supabase configuration works and the app is usable on phones.
+10. **Production Reliability R1 — independently reviewed, PR #17 pending merge:** keep realtime refresh in the background without remount/scroll resets; persist UI-only tab/scroll continuity; durably preserve unconfirmed AppData in user/location-scoped IndexedDB; bounded retry/resume; conservative conflict/recovery; narrow safe unattempted Beach reconciliation; prevent stale attempted records from resurrecting old state. Review corrections are included at head `70fc0657...`.
+11. **Next operational checkpoint:** merge/deploy R1 and validate under normal beach use. Do not treat role UI as higher priority than proving no silent entry loss or disruptive refresh remains.
+12. Add user-specific owner/worker UI/permission differences only after R1 is stable enough in normal production use.
+13. Migrate/refine individual domains into normalized tables later only when the whole-AppData JSONB model becomes an actual limitation.
+
+## Reliability architecture now required by evidence
+
+- Supabase remains authoritative.
+- Initial Auth/shared access load may block; background realtime/reconnect refresh must not blank/remount working UI.
+- Operational UI position is separate device UI state, not shared AppData.
+- Unconfirmed operational mutations must have a durable device copy before retryable network failure/reopen can erase them.
+- Current R1 uses a whole-AppData IndexedDB recovery snapshot, not a full immutable command outbox.
+- Attempted/ambiguous recovery must prefer preserved conflict over guessing or force overwrite.
+- Account/user scoping and RLS remain mandatory around every recovery path.
 
 ## Security hardening before broader production/commercial use
 
 - Enable Supabase Auth leaked-password protection unless a later documented constraint argues against it.
-- Re-run security/performance advisors after each material schema/Auth change.
+- Re-run security/performance advisors after material schema/Auth changes.
 
-## Later work — explicitly not blocking current production-phone readiness
+## Later work
 
-12. Replace remaining device-owned business-day/reset behavior with server-owned `Europe/Zagreb` business-day logic when shared operation makes this necessary.
-13. Prepare separate production infrastructure, neutral branding/domain and stronger ownership separation before broader external/commercial rollout.
-14. When a second real location exists, design the provisioning/deployment pipeline and revisit multi-location architecture from evidence.
-15. Add seasonal licensing only if the business model requires it.
-16. Add offline writes only if operational testing proves they are needed.
-17. Add payment/fiscal integrations later.
+14. If R1's snapshot durability proves insufficient for long offline periods or frequent multi-user conflicts, implement a normalized immutable offline operation/outbox model with server-side idempotency and per-entity versions.
+15. Replace remaining device-owned business-day/reset behavior with server-owned `Europe/Zagreb` business-day logic when shared operation makes this necessary.
+16. Prepare separate production infrastructure, neutral branding/domain and stronger ownership separation before broader external/commercial rollout.
+17. When a second real location exists, design the provisioning/deployment pipeline and revisit multi-location architecture from evidence.
+18. Add seasonal licensing only if the business model requires it.
+19. Add payment/fiscal integrations later.
