@@ -37,8 +37,19 @@ import type {
   Transaction,
   TransactionType,
 } from './domain/appData';
+import {
+  createFreshSetPaymentDraft,
+  getSetPaymentDraftAmount,
+} from './domain/setPaymentDraft';
 import type { AuthenticatedUser } from './services/auth/authService';
 import { useAuthSession } from './services/auth/useAuthSession';
+import {
+  getPetalonCapabilities,
+  getPetalonRoleDisplayLabel,
+  type PetalonCapabilities,
+} from './services/membership/petalonCapabilities';
+import type { ActivePetalonMembership } from './services/membership/petalonMembership';
+import { usePetalonMembership } from './services/membership/usePetalonMembership';
 import {
   areSharedStatesEqual,
   type SharedRefreshStatus,
@@ -1266,6 +1277,7 @@ function OperationalApp({
   sharedRefreshStatus,
   sharedSyncMessage,
   onAppDataChange,
+  membership,
   authenticatedUser,
   authActionError,
   signOutPending,
@@ -1277,11 +1289,16 @@ function OperationalApp({
   sharedRefreshStatus: SharedRefreshStatus;
   sharedSyncMessage?: string;
   onAppDataChange: (nextState: AppData) => void;
+  membership: ActivePetalonMembership;
   authenticatedUser: AuthenticatedUser;
   authActionError: string | null;
   signOutPending: boolean;
   onSignOut: () => Promise<void>;
 }) {
+  const capabilities = useMemo(
+    () => getPetalonCapabilities(membership.role),
+    [membership.role],
+  );
   const [initialAppData] = useState(() => initializeAppDataForToday(sharedAppData));
   const [initialContinuity] = useState(() => loadUiContinuity(window.localStorage));
   const [sets, setSets] = useState<BeachSetMap>(() => initialAppData.sets);
@@ -2279,6 +2296,8 @@ function OperationalApp({
           transactions={transactions}
           reportArchive={reportArchive}
           onDeleteTransaction={deleteTransaction}
+          membership={membership}
+          capabilities={capabilities}
           authenticatedUser={authenticatedUser}
           authActionError={authActionError}
           signOutPending={signOutPending}
@@ -3348,7 +3367,7 @@ function BeachShortcuts({ onSelect }: { onSelect: (section: BeachShortcut) => vo
   </nav>;
 }
 
-function SettingsPage({ view, backupMessage, importInputRef, savedSurnames, onDailyReset, onExport, onImport, onImportFile, onResetAppData, onDeleteSurname, onShowTransactions, onShowReport, onBackToSettings, transactions, reportArchive, onDeleteTransaction, authenticatedUser, authActionError, signOutPending, onSignOut }: {
+function SettingsPage({ view, backupMessage, importInputRef, savedSurnames, onDailyReset, onExport, onImport, onImportFile, onResetAppData, onDeleteSurname, onShowTransactions, onShowReport, onBackToSettings, transactions, reportArchive, onDeleteTransaction, membership, capabilities, authenticatedUser, authActionError, signOutPending, onSignOut }: {
   view: SettingsView;
   backupMessage: string | null;
   importInputRef: MutableRefObject<HTMLInputElement | null>;
@@ -3365,6 +3384,8 @@ function SettingsPage({ view, backupMessage, importInputRef, savedSurnames, onDa
   transactions: Transaction[];
   reportArchive: ArchivedDailyReport[];
   onDeleteTransaction: (transactionId: string) => void;
+  membership: ActivePetalonMembership;
+  capabilities: PetalonCapabilities;
   authenticatedUser: AuthenticatedUser;
   authActionError: string | null;
   signOutPending: boolean;
@@ -3379,10 +3400,10 @@ function SettingsPage({ view, backupMessage, importInputRef, savedSurnames, onDa
   return <section className="settings-page" aria-labelledby="settings-heading">
     <header className="report-hero"><p className="eyebrow">Shared Petalon controls</p><h2 id="settings-heading">Settings</h2></header>
     <section className="settings-section"><h3>Records</h3><div className="settings-menu-actions"><button type="button" className="tool-button" onClick={onShowTransactions}>Transactions</button><button type="button" className="tool-button" onClick={onShowReport}>Reports</button></div></section>
-    <section className="settings-section"><h3>Daily Reset</h3><p>Start a fresh shared business day and clear current-day sales.</p><button type="button" className="reset-button" onClick={onDailyReset}>Daily Reset</button></section>
-    <section className="settings-section"><h3>Backups</h3><p>Export the current shared Petalon state, or explicitly replace it by importing a compatible backup.</p><div className="tool-buttons"><button type="button" className="tool-button" onClick={onExport}>Export Backup</button><button type="button" className="tool-button" onClick={onImport}>Import Backup</button></div><input ref={importInputRef} className="file-input" type="file" accept="application/json,.json" onChange={(event) => onImportFile(event.target.files?.[0])} />{backupMessage ? <p className="backup-message">{backupMessage}</p> : null}</section>
-    <section className="settings-section"><h3>Shared Tools</h3><button type="button" className="danger-link" onClick={onResetAppData}>Reset shared app data</button><SavedSurnamesManager savedSurnames={savedSurnames} onDeleteSurname={onDeleteSurname} /></section>
-    <section className="settings-section settings-account"><h3>Account</h3><p>Signed in as <strong>{authenticatedUser.email || 'Authenticated user'}</strong></p><button type="button" className="sign-out-button" disabled={signOutPending} onClick={() => void onSignOut()}>{signOutPending ? 'Signing out…' : 'Sign out'}</button>{authActionError ? <p className="auth-error settings-auth-error" role="alert">{authActionError}</p> : null}</section>
+    {capabilities.canRunDailyReset ? <section className="settings-section"><h3>Daily Reset</h3><p>Start a fresh shared business day and clear current-day sales.</p><button type="button" className="reset-button" onClick={onDailyReset}>Daily Reset</button></section> : null}
+    <section className="settings-section"><h3>Backups</h3><p>{capabilities.canUseDestructiveSharedTools ? 'Export the current shared Petalon state, or explicitly replace it by importing a compatible backup.' : 'Export the current shared Petalon state.'}</p><div className="tool-buttons">{capabilities.canExportBackup ? <button type="button" className="tool-button" onClick={onExport}>Export Backup</button> : null}{capabilities.canUseDestructiveSharedTools ? <button type="button" className="tool-button" onClick={onImport}>Import Backup</button> : null}</div>{capabilities.canUseDestructiveSharedTools ? <input ref={importInputRef} className="file-input" type="file" accept="application/json,.json" onChange={(event) => onImportFile(event.target.files?.[0])} /> : null}{backupMessage ? <p className="backup-message">{backupMessage}</p> : null}</section>
+    <section className="settings-section"><h3>Shared Tools</h3>{capabilities.canUseDestructiveSharedTools ? <button type="button" className="danger-link" onClick={onResetAppData}>Reset shared app data</button> : null}<SavedSurnamesManager savedSurnames={savedSurnames} onDeleteSurname={onDeleteSurname} /></section>
+    <section className="settings-section settings-account"><h3>Account</h3><p className="account-role">{getPetalonRoleDisplayLabel(membership.role)}</p><p>Signed in as <strong>{authenticatedUser.email || 'Authenticated user'}</strong></p><button type="button" className="sign-out-button" disabled={signOutPending} onClick={() => void onSignOut()}>{signOutPending ? 'Signing out…' : 'Sign out'}</button>{authActionError ? <p className="auth-error settings-auth-error" role="alert">{authActionError}</p> : null}</section>
     <section className="settings-about" aria-label="About"><span>About</span><strong>Built for Camp Petalon</strong></section>
   </section>;
 }
@@ -3686,11 +3707,14 @@ function SetEditorModal({
   onCreateReservation: (details: BeachReservationDetails) => void;
 }) {
   const [mode, setMode] = useState<DetailMode>('actions');
-  const [fixedTotal, setFixedTotal] = useState(set.priceMode === 'fixed' ? set.price ?? 0 : 0);
-  const [priceMode, setPriceMode] = useState<SetPriceMode>(set.priceMode ?? 'fixed');
-  const [specialPrice, setSpecialPrice] = useState(set.priceMode === 'special' && set.price ? String(set.price) : '');
-  const parsedSpecialPrice = parsePositiveMoney(specialPrice);
-  const finalPrice = priceMode === 'special' ? parsedSpecialPrice : fixedTotal > 0 ? fixedTotal : null;
+  const [initialPaymentDraft] = useState(() => createFreshSetPaymentDraft(set));
+  const [fixedTotal, setFixedTotal] = useState(initialPaymentDraft.fixedTotal);
+  const [priceMode, setPriceMode] = useState<SetPriceMode>(initialPaymentDraft.priceMode);
+  const [specialPrice, setSpecialPrice] = useState(initialPaymentDraft.specialPrice);
+  const finalPrice = getSetPaymentDraftAmount(
+    { fixedTotal, priceMode, specialPrice },
+    parsePositiveMoney,
+  );
 
   function saveAndClose(status: SetStatus, details?: Partial<BeachSet>) {
     onSave(status, details);
@@ -4190,8 +4214,14 @@ function BedIcon() {
 
 function App() {
   const auth = useAuthSession();
+  const authenticatedUserId =
+    auth.state.status === 'authenticated' ? auth.state.user.id : null;
+  const membership = usePetalonMembership(authenticatedUserId);
+  const sharedUserId = membership.state.status === 'active'
+    ? membership.state.membership.userId
+    : null;
   const shared = useSharedAppData(
-    auth.state.status === 'authenticated' ? auth.state.user.id : null,
+    sharedUserId,
     parseImportedAppData,
   );
 
@@ -4220,6 +4250,38 @@ function App() {
         error={auth.actionError}
         submitting={auth.signingIn}
         onSignIn={auth.signIn}
+      />
+    );
+  }
+
+  if (membership.state.status === 'loading') {
+    return (
+      <AuthStatusPage
+        title="Loading Petalon access"
+        message="Checking your active Petalon membership and role..."
+        loading
+      />
+    );
+  }
+
+  if (membership.state.status === 'inactive') {
+    return (
+      <AuthStatusPage
+        title="Petalon access inactive"
+        message="This account does not currently have active Petalon access."
+        actionLabel="Sign out"
+        onAction={() => void auth.signOut()}
+      />
+    );
+  }
+
+  if (membership.state.status === 'unavailable') {
+    return (
+      <AuthStatusPage
+        title="Petalon access unavailable"
+        message={membership.state.message}
+        actionLabel="Retry membership"
+        onAction={membership.reload}
       />
     );
   }
@@ -4278,6 +4340,7 @@ function App() {
       sharedRefreshStatus={shared.state.refreshStatus}
       sharedSyncMessage={shared.state.syncMessage}
       onAppDataChange={shared.update}
+      membership={membership.state.membership}
       authenticatedUser={auth.state.user}
       authActionError={auth.actionError}
       signOutPending={auth.signingOut}

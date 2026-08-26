@@ -4584,6 +4584,17 @@ button.existing-reservation-option {
   color: #263744;
 }
 
+.settings-account .account-role {
+  width: fit-content;
+  margin-bottom: 10px;
+  padding: 6px 10px;
+  color: #075f57;
+  font-weight: 900;
+  border: 1px solid #9fd4cf;
+  border-radius: 999px;
+  background: #e6f6f3;
+}
+
 .sign-out-button {
   width: 100%;
   color: #8c172b;
