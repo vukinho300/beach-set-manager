@@ -76,10 +76,14 @@ export function AuthStatusPage({
   title,
   message,
   loading = false,
+  actionLabel,
+  onAction,
 }: {
   title: string;
   message: string;
   loading?: boolean;
+  actionLabel?: string;
+  onAction?: () => void;
 }) {
   return (
     <main className="auth-shell">
@@ -88,6 +92,11 @@ export function AuthStatusPage({
         <p className="eyebrow">Camp Petalon</p>
         <h1>{title}</h1>
         <p>{message}</p>
+        {actionLabel && onAction ? (
+          <button className="auth-submit auth-status-action" type="button" onClick={onAction}>
+            {actionLabel}
+          </button>
+        ) : null}
       </section>
     </main>
   );
