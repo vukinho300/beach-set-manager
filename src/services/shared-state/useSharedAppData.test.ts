@@ -14,6 +14,7 @@ function ready(owner: string, revision: number): SharedStateControllerState<Test
     revision,
     generation: 1,
     syncStatus: 'saved',
+    refreshStatus: 'idle',
     updatedAt: '2026-08-26T00:00:00.000Z',
   };
 }

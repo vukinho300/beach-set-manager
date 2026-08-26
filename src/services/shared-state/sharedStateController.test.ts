@@ -6,7 +6,14 @@ import type {
   SharedLocationStateListener,
   SharedLocationStateRepository,
 } from './repository';
-import { SharedStateController } from './sharedStateController';
+import type {
+  PendingSharedStateRecord,
+  PendingSharedStateStore,
+} from './pendingSharedStateStore';
+import {
+  SharedStateController,
+  type SharedStateControllerOptions,
+} from './sharedStateController';
 
 type TestData = { marker: string; value: number };
 
@@ -100,6 +107,19 @@ class FakeRepository implements SharedLocationStateRepository<TestData> {
   }
 }
 
+class FakePendingStore<T> implements PendingSharedStateStore<T> {
+  readonly records = new Map<string, PendingSharedStateRecord<T>>();
+  readonly load = vi.fn(async (userId: string, locationId: string) =>
+    this.records.get(`${userId}:${locationId}`) ?? null,
+  );
+  readonly save = vi.fn(async (record: PendingSharedStateRecord<T>) => {
+    this.records.set(`${record.userId}:${record.locationId}`, record);
+  });
+  readonly remove = vi.fn(async (userId: string, locationId: string) => {
+    this.records.delete(`${userId}:${locationId}`);
+  });
+}
+
 function normalize(value: unknown): TestData | null {
   if (!value || typeof value !== 'object') {
     return null;
@@ -111,16 +131,27 @@ function normalize(value: unknown): TestData | null {
     : null;
 }
 
-function createController(repository = new FakeRepository()) {
+function createController(
+  repository = new FakeRepository(),
+  options: Partial<SharedStateControllerOptions<TestData>> = {},
+) {
+  const pendingStore = options.pendingStore ?? new FakePendingStore<TestData>();
   return {
     repository,
-    controller: new SharedStateController(repository, LOCATION_ID, normalize),
+    pendingStore,
+    controller: new SharedStateController(repository, LOCATION_ID, normalize, {
+      userId: 'user-a',
+      pendingStore,
+      retryDelaysMs: [60_000],
+      ...options,
+    }),
   };
 }
 
 async function flushPromises() {
-  await Promise.resolve();
-  await Promise.resolve();
+  for (let index = 0; index < 30; index += 1) {
+    await Promise.resolve();
+  }
 }
 
 describe('SharedStateController', () => {
@@ -251,6 +282,7 @@ describe('SharedStateController', () => {
     await controller.reload();
 
     controller.update({ marker: 'first', value: 2 });
+    await flushPromises();
     controller.update({ marker: 'superseded', value: 3 });
     controller.update({ marker: 'latest', value: 4 });
 
@@ -282,6 +314,46 @@ describe('SharedStateController', () => {
     });
   });
 
+  it('does not lose a newer mutation that arrives while an accepted record is clearing', async () => {
+    const pendingStore = new FakePendingStore<TestData>();
+    const removal = deferred<void>();
+    pendingStore.remove
+      .mockImplementationOnce(async (userId, locationId) => {
+        await removal.promise;
+        pendingStore.records.delete(`${userId}:${locationId}`);
+      })
+      .mockImplementation(async (userId, locationId) => {
+        pendingStore.records.delete(`${userId}:${locationId}`);
+      });
+    const { repository, controller } = createController(new FakeRepository(), {
+      pendingStore,
+    });
+    await controller.reload();
+
+    controller.update({ marker: 'first', value: 2 });
+    await flushPromises();
+    expect(pendingStore.remove).toHaveBeenCalledTimes(1);
+
+    controller.update({ marker: 'newer-during-clear', value: 3 });
+    await flushPromises();
+    removal.resolve(undefined);
+    await flushPromises();
+
+    expect(repository.save).toHaveBeenNthCalledWith(
+      2,
+      LOCATION_ID,
+      5,
+      { marker: 'newer-during-clear', value: 3 },
+    );
+    expect(controller.getSnapshot()).toMatchObject({
+      status: 'ready',
+      data: { marker: 'newer-during-clear', value: 3 },
+      revision: 6,
+      syncStatus: 'saved',
+    });
+    expect(pendingStore.records.size).toBe(0);
+  });
+
   it('drops the previous user queued snapshot when that controller is deactivated', async () => {
     const { repository, controller } = createController();
     const firstSave = deferred<SaveSharedLocationStateResult<TestData>>();
@@ -294,6 +366,7 @@ describe('SharedStateController', () => {
     await controller.reload();
 
     controller.update({ marker: 'user-a-first', value: 2 });
+    await flushPromises();
     controller.update({ marker: 'user-a-queued', value: 3 });
     expect(repository.save).toHaveBeenCalledTimes(1);
 
@@ -327,6 +400,7 @@ describe('SharedStateController', () => {
       status: 'conflict',
       local: { marker: 'local-unsaved', value: 2 },
       current: sharedState({ marker: 'other-user', value: 8 }, 5),
+      pendingPreserved: true,
     });
 
     controller.update({ marker: 'must-not-save', value: 9 });
@@ -334,7 +408,7 @@ describe('SharedStateController', () => {
     expect(repository.save).toHaveBeenCalledTimes(1);
   });
 
-  it('reloads authoritative data only after a deliberate conflict reload', async () => {
+  it('reloads the server after conflict without discarding preserved local work', async () => {
     const { repository, controller } = createController();
     repository.saveHandler = async () => ({
       status: 'conflict',
@@ -350,10 +424,11 @@ describe('SharedStateController', () => {
 
     await controller.reload();
 
-    expect(controller.getSnapshot()).toMatchObject({
-      status: 'ready',
-      data: { marker: 'latest-server', value: 10 },
-      revision: 6,
+    expect(controller.getSnapshot()).toEqual({
+      status: 'conflict',
+      local: { marker: 'local-unsaved', value: 2 },
+      current: sharedState({ marker: 'latest-server', value: 10 }, 6),
+      pendingPreserved: true,
     });
     expect(repository.save).toHaveBeenCalledTimes(1);
   });
@@ -375,6 +450,7 @@ describe('SharedStateController', () => {
       message: 'Membership inactive.',
       retryable: false,
       local: { marker: 'not-saved', value: 2 },
+      pendingPreserved: true,
     });
     controller.update({ marker: 'must-not-save', value: 3 });
     await flushPromises();
@@ -393,6 +469,10 @@ describe('SharedStateController', () => {
       (value) => {
         const parsed = normalize(value);
         return parsed?.marker ? parsed : null;
+      },
+      {
+        userId: 'user-a',
+        pendingStore: new FakePendingStore<TestData>(),
       },
     );
 
@@ -442,7 +522,7 @@ describe('SharedStateController', () => {
       status: 'ready',
       data: { marker: 'remote-user', value: 2 },
       revision: 5,
-      generation: 2,
+      generation: 1,
       syncStatus: 'saved',
     });
 
@@ -514,6 +594,7 @@ describe('SharedStateController', () => {
       status: 'conflict',
       local: { marker: 'local-race', value: 2 },
       current: sharedState({ marker: 'remote-winner', value: 3 }, 5),
+      pendingPreserved: true,
     });
     expect(repository.load).toHaveBeenCalledTimes(1);
   });
@@ -530,6 +611,7 @@ describe('SharedStateController', () => {
     await controller.reload();
 
     controller.update({ marker: 'first-local', value: 2 });
+    await flushPromises();
     controller.update({ marker: 'latest-local', value: 3 });
     repository.emitRevision(5);
     expect(repository.load).toHaveBeenCalledTimes(1);
@@ -579,6 +661,7 @@ describe('SharedStateController', () => {
       message: 'Membership inactive.',
       retryable: false,
       local: { marker: 'not-saved', value: 2 },
+      pendingPreserved: true,
     });
     expect(repository.load).toHaveBeenCalledTimes(1);
   });
@@ -622,7 +705,10 @@ describe('SharedStateController', () => {
 
   it('owns one subscription per user-scoped controller and ignores stale callbacks', async () => {
     const repository = new FakeRepository();
-    const controllerA = new SharedStateController(repository, LOCATION_ID, normalize);
+    const controllerA = new SharedStateController(repository, LOCATION_ID, normalize, {
+      userId: 'user-a',
+      pendingStore: new FakePendingStore<TestData>(),
+    });
     controllerA.activate();
     controllerA.activate();
     await controllerA.reload();
@@ -635,7 +721,10 @@ describe('SharedStateController', () => {
       status: 'found',
       value: sharedState({ marker: 'user-b', value: 2 }, 5),
     });
-    const controllerB = new SharedStateController(repository, LOCATION_ID, normalize);
+    const controllerB = new SharedStateController(repository, LOCATION_ID, normalize, {
+      userId: 'user-b',
+      pendingStore: new FakePendingStore<TestData>(),
+    });
     controllerB.activate();
     await controllerB.reload();
     expect(repository.subscribe).toHaveBeenCalledTimes(2);
@@ -649,5 +738,383 @@ describe('SharedStateController', () => {
       data: { marker: 'user-b', value: 2 },
       revision: 5,
     });
+  });
+
+  it('keeps ready UI mounted during realtime and reconnect background refreshes', async () => {
+    const { repository, controller } = createController();
+    const observed: Array<ReturnType<typeof controller.getSnapshot>> = [];
+    controller.activate();
+    controller.observe((state) => observed.push(state));
+    await controller.reload();
+    observed.length = 0;
+    repository.loadHandler = async () => ({
+      status: 'found',
+      value: sharedState({ marker: 'background', value: 2 }, 5),
+    });
+
+    repository.emitRevision(5);
+    await flushPromises();
+
+    expect(observed.some((state) => state.status === 'loading')).toBe(false);
+    expect(observed).toContainEqual(expect.objectContaining({
+      status: 'ready',
+      refreshStatus: 'refreshing',
+    }));
+    expect(controller.getSnapshot()).toMatchObject({
+      status: 'ready',
+      data: { marker: 'background', value: 2 },
+      revision: 5,
+      generation: 1,
+      refreshStatus: 'idle',
+    });
+    expect(repository.save).not.toHaveBeenCalled();
+
+    repository.loadHandler = async () => ({
+      status: 'found',
+      value: sharedState({ marker: 'reconnected', value: 3 }, 6),
+    });
+    observed.length = 0;
+    repository.emitSubscribed();
+    await flushPromises();
+
+    expect(observed.some((state) => state.status === 'loading')).toBe(false);
+    expect(controller.getSnapshot()).toMatchObject({
+      status: 'ready',
+      data: { marker: 'reconnected', value: 3 },
+      revision: 6,
+      generation: 1,
+    });
+    expect(repository.save).not.toHaveBeenCalled();
+  });
+
+  it('keeps confirmed data visible when a background load fails transiently', async () => {
+    const { repository, controller } = createController();
+    controller.activate();
+    await controller.reload();
+    repository.loadHandler = async () => ({
+      status: 'unavailable',
+      error: { message: 'Network unavailable.', retryable: true },
+    });
+
+    repository.emitRevision(5);
+    await flushPromises();
+
+    expect(controller.getSnapshot()).toMatchObject({
+      status: 'ready',
+      data: { marker: 'server', value: 1 },
+      revision: 4,
+      syncStatus: 'saved',
+      refreshStatus: 'stale',
+    });
+
+    repository.loadHandler = async () => ({
+      status: 'found',
+      value: sharedState({ marker: 'online-again', value: 2 }, 5),
+    });
+    controller.resume();
+    await flushPromises();
+
+    expect(controller.getSnapshot()).toMatchObject({
+      status: 'ready',
+      data: { marker: 'online-again', value: 2 },
+      revision: 5,
+      refreshStatus: 'idle',
+    });
+  });
+
+  it('preserves a retryable failed save durably and accepts it on bounded retry', async () => {
+    const scheduled: Array<() => void> = [];
+    const repository = new FakeRepository();
+    repository.saveHandler = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: 'unavailable',
+        error: { message: 'Network unavailable.', retryable: true },
+      })
+      .mockImplementationOnce(async (_locationId, expectedRevision, nextState) => ({
+        status: 'accepted',
+        value: sharedState(nextState, expectedRevision + 1),
+      }));
+    const pendingStore = new FakePendingStore<TestData>();
+    const { controller } = createController(repository, {
+      pendingStore,
+      scheduleRetry: (callback) => {
+        scheduled.push(callback);
+        return () => undefined;
+      },
+      retryDelaysMs: [1],
+    });
+    await controller.reload();
+
+    controller.update({ marker: 'offline-entry', value: 2 });
+    await flushPromises();
+
+    expect(controller.getSnapshot()).toMatchObject({
+      status: 'ready',
+      data: { marker: 'offline-entry', value: 2 },
+      revision: 4,
+      syncStatus: 'pending',
+    });
+    controller.update({ marker: 'offline-latest-entry', value: 3 });
+    await flushPromises();
+    expect(pendingStore.records.get(`user-a:${LOCATION_ID}`)).toMatchObject({
+      userId: 'user-a',
+      baseRevision: 4,
+      baseState: { marker: 'server', value: 1 },
+      desiredState: { marker: 'offline-latest-entry', value: 3 },
+    });
+
+    scheduled.shift()?.();
+    await flushPromises();
+
+    expect(repository.save).toHaveBeenNthCalledWith(
+      2,
+      LOCATION_ID,
+      4,
+      { marker: 'offline-latest-entry', value: 3 },
+    );
+    expect(controller.getSnapshot()).toMatchObject({
+      status: 'ready',
+      data: { marker: 'offline-latest-entry', value: 3 },
+      revision: 5,
+      syncStatus: 'saved',
+    });
+    expect(pendingStore.records.size).toBe(0);
+  });
+
+  it('recovers the same user pending state after controller restart without duplication', async () => {
+    const pendingStore = new FakePendingStore<TestData>();
+    const firstRepository = new FakeRepository();
+    firstRepository.saveHandler = async () => ({
+      status: 'unavailable',
+      error: { message: 'Network unavailable.', retryable: true },
+    });
+    const first = createController(firstRepository, {
+      pendingStore,
+      scheduleRetry: () => () => undefined,
+    }).controller;
+    await first.reload();
+    first.update({ marker: 'survives-reopen', value: 2 });
+    await flushPromises();
+    first.deactivate();
+
+    const secondRepository = new FakeRepository();
+    const second = createController(secondRepository, { pendingStore }).controller;
+    await second.reload();
+    await flushPromises();
+
+    expect(secondRepository.save).toHaveBeenCalledTimes(1);
+    expect(secondRepository.save).toHaveBeenCalledWith(
+      LOCATION_ID,
+      4,
+      { marker: 'survives-reopen', value: 2 },
+    );
+    expect(second.getSnapshot()).toMatchObject({
+      status: 'ready',
+      data: { marker: 'survives-reopen', value: 2 },
+      revision: 5,
+      syncStatus: 'saved',
+    });
+    expect(pendingStore.records.size).toBe(0);
+  });
+
+  it('resumes a newer pending snapshot when the last attempted snapshot reached the server', async () => {
+    const pendingStore = new FakePendingStore<TestData>();
+    await pendingStore.save({
+      userId: 'user-a',
+      locationId: LOCATION_ID,
+      baseRevision: 4,
+      baseState: { marker: 'server', value: 1 },
+      desiredState: { marker: 'latest-local', value: 3 },
+      attemptedRevision: 4,
+      attemptedState: { marker: 'first-local', value: 2 },
+      createdAt: '2026-08-26T00:00:00.000Z',
+      updatedAt: '2026-08-26T00:00:01.000Z',
+    });
+    const repository = new FakeRepository();
+    repository.loadHandler = async () => ({
+      status: 'found',
+      value: sharedState({ marker: 'first-local', value: 2 }, 5),
+    });
+    const { controller } = createController(repository, { pendingStore });
+
+    await controller.reload();
+    await flushPromises();
+
+    expect(repository.save).toHaveBeenCalledWith(
+      LOCATION_ID,
+      5,
+      { marker: 'latest-local', value: 3 },
+    );
+    expect(controller.getSnapshot()).toMatchObject({
+      status: 'ready',
+      data: { marker: 'latest-local', value: 3 },
+      revision: 6,
+      syncStatus: 'saved',
+    });
+    expect(pendingStore.records.size).toBe(0);
+  });
+
+  it('treats an ambiguous retry as accepted when the server already has the exact snapshot', async () => {
+    const scheduled: Array<() => void> = [];
+    const pendingStore = new FakePendingStore<TestData>();
+    const repository = new FakeRepository();
+    const desired = { marker: 'accepted-before-disconnect', value: 2 };
+    repository.saveHandler = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: 'unavailable',
+        error: { message: 'Response was lost.', retryable: true },
+      })
+      .mockResolvedValueOnce({
+        status: 'conflict',
+        current: sharedState(desired, 5),
+      });
+    const { controller } = createController(repository, {
+      pendingStore,
+      scheduleRetry: (callback) => {
+        scheduled.push(callback);
+        return () => undefined;
+      },
+    });
+    await controller.reload();
+    controller.update(desired);
+    await flushPromises();
+
+    scheduled.shift()?.();
+    await flushPromises();
+
+    expect(repository.save).toHaveBeenCalledTimes(2);
+    expect(controller.getSnapshot()).toMatchObject({
+      status: 'ready',
+      data: desired,
+      revision: 5,
+      syncStatus: 'saved',
+    });
+    expect(pendingStore.records.size).toBe(0);
+  });
+
+  it('preserves pending work as a conflict when the server advanced while closed', async () => {
+    const pendingStore = new FakePendingStore<TestData>();
+    await pendingStore.save({
+      userId: 'user-a',
+      locationId: LOCATION_ID,
+      baseRevision: 4,
+      baseState: { marker: 'server', value: 1 },
+      desiredState: { marker: 'local-preserved', value: 2 },
+      createdAt: '2026-08-26T00:00:00.000Z',
+      updatedAt: '2026-08-26T00:00:01.000Z',
+    });
+    const repository = new FakeRepository();
+    repository.loadHandler = async () => ({
+      status: 'found',
+      value: sharedState({ marker: 'other-user', value: 9 }, 5),
+    });
+    const { controller } = createController(repository, { pendingStore });
+
+    await controller.reload();
+
+    expect(controller.getSnapshot()).toEqual({
+      status: 'conflict',
+      local: { marker: 'local-preserved', value: 2 },
+      current: sharedState({ marker: 'other-user', value: 9 }, 5),
+      pendingPreserved: true,
+    });
+    expect(repository.save).not.toHaveBeenCalled();
+    expect(pendingStore.records.size).toBe(1);
+  });
+
+  it('retries a narrowly reconciled pending state against the current server revision', async () => {
+    const pendingStore = new FakePendingStore<TestData>();
+    await pendingStore.save({
+      userId: 'user-a',
+      locationId: LOCATION_ID,
+      baseRevision: 4,
+      baseState: { marker: 'server', value: 1 },
+      desiredState: { marker: 'local-preserved', value: 2 },
+      createdAt: '2026-08-26T00:00:00.000Z',
+      updatedAt: '2026-08-26T00:00:01.000Z',
+    });
+    const repository = new FakeRepository();
+    repository.loadHandler = async () => ({
+      status: 'found',
+      value: sharedState({ marker: 'compatible-server', value: 3 }, 5),
+    });
+    const { controller } = createController(repository, {
+      pendingStore,
+      reconcilePendingState: (_base, desired, server) => ({
+        marker: desired.marker,
+        value: server.value + desired.value,
+      }),
+    });
+
+    await controller.reload();
+    await flushPromises();
+
+    expect(repository.save).toHaveBeenCalledWith(
+      LOCATION_ID,
+      5,
+      { marker: 'local-preserved', value: 5 },
+    );
+    expect(controller.getSnapshot()).toMatchObject({
+      status: 'ready',
+      revision: 6,
+      data: { marker: 'local-preserved', value: 5 },
+    });
+    expect(pendingStore.records.size).toBe(0);
+  });
+
+  it('never exposes or retries User A pending state for User B', async () => {
+    const pendingStore = new FakePendingStore<TestData>();
+    await pendingStore.save({
+      userId: 'user-a',
+      locationId: LOCATION_ID,
+      baseRevision: 4,
+      baseState: { marker: 'server', value: 1 },
+      desiredState: { marker: 'user-a-private-pending', value: 2 },
+      createdAt: '2026-08-26T00:00:00.000Z',
+      updatedAt: '2026-08-26T00:00:01.000Z',
+    });
+    const repository = new FakeRepository();
+    const { controller } = createController(repository, {
+      userId: 'user-b',
+      pendingStore,
+    });
+
+    await controller.reload();
+    await flushPromises();
+
+    expect(controller.getSnapshot()).toMatchObject({
+      status: 'ready',
+      data: { marker: 'server', value: 1 },
+      syncStatus: 'saved',
+    });
+    expect(repository.save).not.toHaveBeenCalled();
+    expect(pendingStore.records.has(`user-a:${LOCATION_ID}`)).toBe(true);
+  });
+
+  it('cancels automatic retries on sign-out/deactivation', async () => {
+    const scheduled: Array<() => void> = [];
+    const repository = new FakeRepository();
+    repository.saveHandler = async () => ({
+      status: 'unavailable',
+      error: { message: 'Network unavailable.', retryable: true },
+    });
+    const { controller } = createController(repository, {
+      scheduleRetry: (callback) => {
+        scheduled.push(callback);
+        return () => undefined;
+      },
+    });
+    await controller.reload();
+    controller.update({ marker: 'pending-before-signout', value: 2 });
+    await flushPromises();
+    expect(repository.save).toHaveBeenCalledTimes(1);
+
+    controller.deactivate();
+    scheduled.shift()?.();
+    await flushPromises();
+
+    expect(repository.save).toHaveBeenCalledTimes(1);
   });
 });

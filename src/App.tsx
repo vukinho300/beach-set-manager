@@ -39,10 +39,30 @@ import type {
 } from './domain/appData';
 import type { AuthenticatedUser } from './services/auth/authService';
 import { useAuthSession } from './services/auth/useAuthSession';
+import {
+  areSharedStatesEqual,
+  type SharedRefreshStatus,
+  type SharedSyncStatus,
+} from './services/shared-state/sharedStateController';
+import {
+  consumeOperationalSnapshot,
+  createOperationalAppDataBridge,
+  stageAuthoritativeSnapshot,
+} from './services/shared-state/operationalAppDataBridge';
 import { useSharedAppData } from './services/shared-state/useSharedAppData';
+import {
+  clampScrollPosition,
+  loadUiContinuity,
+  retainVisibleScrollPosition,
+  saveUiContinuity,
+  shouldWaitForScrollLayout,
+  withActiveTab,
+  withScrollPosition,
+  type OperationalTab,
+} from './services/ui/uiContinuity';
 import './App.css';
 
-type TabId = 'beaches' | 'sunbeds' | 'aquapark' | 'settings';
+type TabId = OperationalTab;
 type BeachShortcut = 'beach1' | 'beach2' | 'beds';
 type SettingsView = 'menu' | 'transactions' | 'report';
 type DetailMode = 'actions' | 'reserved';
@@ -1240,25 +1260,30 @@ function createBackupPayload(appData: AppData): BackupPayload {
 }
 
 function OperationalApp({
-  initialSharedAppData,
+  sharedAppData,
   sharedRevision,
   sharedSyncStatus,
+  sharedRefreshStatus,
+  sharedSyncMessage,
   onAppDataChange,
   authenticatedUser,
   authActionError,
   signOutPending,
   onSignOut,
 }: {
-  initialSharedAppData: AppData;
+  sharedAppData: AppData;
   sharedRevision: number;
-  sharedSyncStatus: 'saved' | 'saving';
+  sharedSyncStatus: SharedSyncStatus;
+  sharedRefreshStatus: SharedRefreshStatus;
+  sharedSyncMessage?: string;
   onAppDataChange: (nextState: AppData) => void;
   authenticatedUser: AuthenticatedUser;
   authActionError: string | null;
   signOutPending: boolean;
   onSignOut: () => Promise<void>;
 }) {
-  const [initialAppData] = useState(() => initializeAppDataForToday(initialSharedAppData));
+  const [initialAppData] = useState(() => initializeAppDataForToday(sharedAppData));
+  const [initialContinuity] = useState(() => loadUiContinuity(window.localStorage));
   const [sets, setSets] = useState<BeachSetMap>(() => initialAppData.sets);
   const [extraBeds, setExtraBeds] = useState<ExtraBedMap>(() => initialAppData.extraBeds);
   const [beachReservations, setBeachReservations] = useState<BeachReservation[]>(
@@ -1280,7 +1305,7 @@ function OperationalApp({
   const [lastAutomaticResetDate, setLastAutomaticResetDate] = useState(
     () => initialAppData.lastAutomaticResetDate ?? getLocalDateKey(),
   );
-  const [activeTab, setActiveTab] = useState<TabId>('beaches');
+  const [activeTab, setActiveTab] = useState<TabId>(() => initialContinuity.activeTab);
   const [settingsView, setSettingsView] = useState<SettingsView>('menu');
   const [activeEditor, setActiveEditor] = useState<ActiveEditor | null>(null);
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
@@ -1290,9 +1315,98 @@ function OperationalApp({
   const bedsRef = useRef<HTMLElement | null>(null);
   const lastAutomaticResetDateRef = useRef(lastAutomaticResetDate);
   const transactionsRef = useRef(transactions);
+  const appDataBridgeRef = useRef(createOperationalAppDataBridge(initialAppData));
+  const sharedSnapshotEffectMountedRef = useRef(false);
+  const continuityRef = useRef(initialContinuity);
+  const activeTabRef = useRef<TabId>(initialContinuity.activeTab);
+  const scrollWriteTimerRef = useRef<number | null>(null);
+  const scrollRestoreFrameRef = useRef<number | null>(null);
+  const scrollRestorePendingRef = useRef(false);
+  const lastVisibleScrollYRef = useRef(
+    initialContinuity.scrollPositions[initialContinuity.activeTab],
+  );
+
+  function cancelScheduledScrollRestore() {
+    if (scrollRestoreFrameRef.current !== null) {
+      window.cancelAnimationFrame(scrollRestoreFrameRef.current);
+      scrollRestoreFrameRef.current = null;
+    }
+    scrollRestorePendingRef.current = false;
+  }
+
+  function scheduleScrollRestore(tabId: TabId) {
+    cancelScheduledScrollRestore();
+    scrollRestorePendingRef.current = true;
+    const requestedScrollY = continuityRef.current.scrollPositions[tabId];
+    let attemptsRemaining = 120;
+    let settledFrames = 0;
+
+    const restoreWhenLayoutIsReady = () => {
+      scrollRestoreFrameRef.current = null;
+      const maximumScrollY = Math.max(
+        0,
+        document.documentElement.scrollHeight - window.innerHeight,
+      );
+      attemptsRemaining -= 1;
+
+      if (shouldWaitForScrollLayout(requestedScrollY, maximumScrollY, attemptsRemaining)) {
+        scrollRestoreFrameRef.current = window.requestAnimationFrame(restoreWhenLayoutIsReady);
+        return;
+      }
+
+      const targetScrollY = clampScrollPosition(requestedScrollY, maximumScrollY);
+      window.scrollTo({
+        top: targetScrollY,
+        behavior: 'auto',
+      });
+      settledFrames = Math.abs(window.scrollY - targetScrollY) <= 2
+        ? settledFrames + 1
+        : 0;
+
+      if (settledFrames < 2 && attemptsRemaining > 0) {
+        scrollRestoreFrameRef.current = window.requestAnimationFrame(restoreWhenLayoutIsReady);
+        return;
+      }
+
+      lastVisibleScrollYRef.current = targetScrollY;
+      scrollRestorePendingRef.current = false;
+    };
+
+    scrollRestoreFrameRef.current = window.requestAnimationFrame(restoreWhenLayoutIsReady);
+  }
 
   useEffect(() => {
-    onAppDataChange({
+    if (!sharedSnapshotEffectMountedRef.current) {
+      sharedSnapshotEffectMountedRef.current = true;
+      return;
+    }
+
+    if (!stageAuthoritativeSnapshot(
+      appDataBridgeRef.current,
+      sharedAppData,
+      areSharedStatesEqual,
+    )) {
+      return;
+    }
+
+    transactionsRef.current = sharedAppData.transactions;
+    lastAutomaticResetDateRef.current =
+      sharedAppData.lastAutomaticResetDate ?? getLocalDateKey();
+    setSets(sharedAppData.sets);
+    setExtraBeds(sharedAppData.extraBeds);
+    setBeachReservations(sharedAppData.beachReservations);
+    setSavedSurnames(sharedAppData.savedSurnames);
+    setSunbedSales(sharedAppData.sunbedSales);
+    setAquaparkEntries(sharedAppData.aquaparkEntries);
+    setTransactions(sharedAppData.transactions);
+    setReportArchive(sharedAppData.reportArchive);
+    setLastAutomaticResetDate(
+      sharedAppData.lastAutomaticResetDate ?? getLocalDateKey(),
+    );
+  }, [sharedAppData]);
+
+  useEffect(() => {
+    const nextAppData = {
       sets,
       extraBeds,
       beachReservations,
@@ -1302,7 +1416,16 @@ function OperationalApp({
       transactions,
       reportArchive,
       lastAutomaticResetDate,
-    });
+    };
+    if (!consumeOperationalSnapshot(
+      appDataBridgeRef.current,
+      nextAppData,
+      areSharedStatesEqual,
+    )) {
+      return;
+    }
+
+    onAppDataChange(nextAppData);
   }, [sets, extraBeds, beachReservations, savedSurnames, sunbedSales, aquaparkEntries, transactions, reportArchive, lastAutomaticResetDate, onAppDataChange]);
 
   useEffect(() => {
@@ -1312,6 +1435,77 @@ function OperationalApp({
   useEffect(() => {
     window.localStorage.setItem('beach-reservations-collapsed', String(reservationsCollapsed));
   }, [reservationsCollapsed]);
+
+  useEffect(() => {
+    function persistCurrentScroll() {
+      if (scrollRestorePendingRef.current) {
+        return;
+      }
+      continuityRef.current = withScrollPosition(
+        continuityRef.current,
+        activeTabRef.current,
+        lastVisibleScrollYRef.current,
+      );
+      saveUiContinuity(window.localStorage, continuityRef.current);
+    }
+
+    function scheduleScrollPersistence() {
+      lastVisibleScrollYRef.current = retainVisibleScrollPosition(
+        lastVisibleScrollYRef.current,
+        window.scrollY,
+        document.visibilityState === 'visible',
+        scrollRestorePendingRef.current,
+      );
+      if (scrollWriteTimerRef.current !== null) {
+        return;
+      }
+
+      scrollWriteTimerRef.current = window.setTimeout(() => {
+        scrollWriteTimerRef.current = null;
+        persistCurrentScroll();
+      }, 200);
+    }
+
+    function persistOnVisibilityChange() {
+      if (document.visibilityState === 'hidden') {
+        persistCurrentScroll();
+      }
+    }
+
+    function cancelRestoreForUserScroll() {
+      if (!scrollRestorePendingRef.current) {
+        return;
+      }
+      cancelScheduledScrollRestore();
+      lastVisibleScrollYRef.current = window.scrollY;
+    }
+
+    const previousScrollRestoration = window.history.scrollRestoration;
+    window.history.scrollRestoration = 'manual';
+
+    window.addEventListener('scroll', scheduleScrollPersistence, { passive: true });
+    window.addEventListener('touchstart', cancelRestoreForUserScroll, { passive: true });
+    window.addEventListener('wheel', cancelRestoreForUserScroll, { passive: true });
+    window.addEventListener('pagehide', persistCurrentScroll);
+    document.addEventListener('visibilitychange', persistOnVisibilityChange);
+
+    scheduleScrollRestore(activeTabRef.current);
+
+    return () => {
+      cancelScheduledScrollRestore();
+      if (scrollWriteTimerRef.current !== null) {
+        window.clearTimeout(scrollWriteTimerRef.current);
+        scrollWriteTimerRef.current = null;
+      }
+      persistCurrentScroll();
+      window.removeEventListener('scroll', scheduleScrollPersistence);
+      window.removeEventListener('touchstart', cancelRestoreForUserScroll);
+      window.removeEventListener('wheel', cancelRestoreForUserScroll);
+      window.removeEventListener('pagehide', persistCurrentScroll);
+      document.removeEventListener('visibilitychange', persistOnVisibilityChange);
+      window.history.scrollRestoration = previousScrollRestoration;
+    };
+  }, []);
 
   useEffect(() => {
     // Installed PWAs may honor this lock; browsers that do not retain the compact portrait CSS layout.
@@ -1423,10 +1617,31 @@ function OperationalApp({
     target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
-  function selectTab(tabId: TabId) {
+  function selectTab(tabId: TabId, restorePosition = true) {
+    cancelScheduledScrollRestore();
+    if (scrollWriteTimerRef.current !== null) {
+      window.clearTimeout(scrollWriteTimerRef.current);
+      scrollWriteTimerRef.current = null;
+    }
+    continuityRef.current = withScrollPosition(
+      continuityRef.current,
+      activeTabRef.current,
+      retainVisibleScrollPosition(
+        lastVisibleScrollYRef.current,
+        window.scrollY,
+        document.visibilityState === 'visible',
+        scrollRestorePendingRef.current,
+      ),
+    );
+    continuityRef.current = withActiveTab(continuityRef.current, tabId);
+    saveUiContinuity(window.localStorage, continuityRef.current);
+    activeTabRef.current = tabId;
+    lastVisibleScrollYRef.current = continuityRef.current.scrollPositions[tabId];
     setActiveTab(tabId);
     if (tabId === 'settings') setSettingsView('menu');
-    window.requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
+    if (restorePosition) {
+      scheduleScrollRestore(tabId);
+    }
   }
 
   function selectBeachShortcut(section: BeachShortcut) {
@@ -1434,7 +1649,7 @@ function OperationalApp({
       scrollToBeachSection(section);
       return;
     }
-    setActiveTab('beaches');
+    selectTab('beaches', false);
     window.requestAnimationFrame(() => scrollToBeachSection(section));
   }
 
@@ -2015,11 +2230,19 @@ function OperationalApp({
   return (
     <main className={`app-shell tab-${activeTab}${activeTab === 'beaches' ? ' beaches-active' : ''}`}>
       <TopNavigation activeTab={activeTab} onSelectTab={selectTab} />
-      <div className={`shared-sync-status shared-sync-${sharedSyncStatus}`} aria-live="polite">
+      <div className={`shared-sync-status shared-sync-${sharedSyncStatus} shared-refresh-${sharedRefreshStatus}`} aria-live="polite">
         <span className="shared-sync-dot" aria-hidden="true" />
-        {sharedSyncStatus === 'saving'
-          ? 'Saving shared data...'
-          : `Shared data saved - revision ${sharedRevision}`}
+        {sharedSyncMessage ?? (
+          sharedSyncStatus === 'saving'
+            ? 'Saving shared data...'
+            : sharedSyncStatus === 'pending'
+              ? 'Not saved yet — retrying. Changes are preserved on this device.'
+              : sharedRefreshStatus === 'refreshing'
+                ? 'Refreshing shared data...'
+                : sharedRefreshStatus === 'stale'
+                  ? 'Connection interrupted — showing confirmed shared data.'
+                  : `Shared data saved - revision ${sharedRevision}`
+        )}
       </div>
 
       <div className="page-content">
@@ -4027,8 +4250,8 @@ function App() {
     return (
       <AuthStatusPage
         title="Newer shared data exists"
-        message={`Another user saved Petalon first${currentRevision === undefined ? '' : ` at revision ${currentRevision}`}. Reloading shared data will discard this device's unsaved conflicting changes.`}
-        actionLabel="Reload shared data"
+        message={`Another user saved Petalon first${currentRevision === undefined ? '' : ` at revision ${currentRevision}`}. This device's unsaved changes remain safely preserved and will not overwrite the server automatically.`}
+        actionLabel="Check shared data again"
         onAction={() => void shared.reload()}
       />
     );
@@ -4039,9 +4262,9 @@ function App() {
       <AuthStatusPage
         title="Shared Petalon data unavailable"
         message={shared.state.phase === 'save'
-          ? `${shared.state.message} Changes on this device were not saved. Reloading will discard them.`
+          ? `${shared.state.message}${shared.state.pendingPreserved ? ' Unsaved changes remain preserved for this account on this device.' : ''}`
           : `${shared.state.message} Local browser data was not used.`}
-        actionLabel="Reload shared data"
+        actionLabel="Retry shared access"
         onAction={() => void shared.reload()}
       />
     );
@@ -4049,10 +4272,11 @@ function App() {
 
   return (
     <OperationalApp
-      key={shared.state.generation}
-      initialSharedAppData={shared.state.data}
+      sharedAppData={shared.state.data}
       sharedRevision={shared.state.revision}
       sharedSyncStatus={shared.state.syncStatus}
+      sharedRefreshStatus={shared.state.refreshStatus}
+      sharedSyncMessage={shared.state.syncMessage}
       onAppDataChange={shared.update}
       authenticatedUser={auth.state.user}
       authActionError={auth.actionError}
