@@ -4,7 +4,7 @@ Status: `canonical`
 
 ## Current state
 
-Shared Petalon operational persistence is merged in Step 6 / PR #12. Realtime/invalidation is implemented and independently reviewed in Step 7 / PR #14, pending merge.
+**Shared Petalon v1 is VERIFIED.** Steps 1–7 are implemented and merged, and Step 8 final three-account/security/realtime verification passed with no implementation changes required.
 
 Completed Shared Petalon foundations:
 
@@ -66,27 +66,52 @@ PR #12:
 - account-switch isolation bound to authenticated user/controller;
 - manual Vuk/Vito shared persistence verification passed.
 
-### Step 7 — implemented and independently reviewed, PR #14 pending merge
+### Step 7 — merged
 
-PR #14 head `7af26050fd596e46db1ecaffaba957b61ffa19f8`:
+PR #14:
 
 - Supabase-specific realtime subscription stays inside `supabaseRepository.ts`;
 - listens only to `UPDATE` on `public.location_state` filtered to the Petalon location ID;
-- realtime payload carries only a revision invalidation hint; authoritative AppData/revision still comes from repository `load()` or accepted `save()`;
+- realtime is invalidation-only; authoritative AppData/revision still comes from repository `load()` or accepted `save()`;
 - focused migration adds only `public.location_state` to `supabase_realtime` in Beach Set Manager;
-- successful subscribe/reconnect causes a defensive unversioned invalidation so missed events are reconciled;
-- old/self revisions at or below the local accepted revision are ignored;
+- old/self revisions are ignored;
 - clean newer invalidations trigger automatic authoritative reload;
-- remote invalidations never replace an in-flight save or coalesced local mutation;
-- existing stale-save conflict behavior remains authoritative;
-- conflict/unavailable/not-found states are not automatically cleared by realtime events;
-- at most one automatic reload is in flight; rapid invalidations coalesce to the newest necessary target;
-- each authenticated user/controller owns one subscription; sign-out/account switch removes it and stale callbacks cannot affect the next user;
-- manual Vuk→Vito and Vito→Vuk automatic convergence passed without refresh, including cleanup convergence;
-- test suite reported 49/49 passing with build and `git diff --check` passing;
-- migration status/publication verification passed; KNO remained untouched.
+- in-flight/pending local work remains protected by the revision-safe save lifecycle;
+- conflict/unavailable/not-found states are not automatically cleared by realtime;
+- automatic reloads are serialized/coalesced;
+- user/controller-scoped subscription cleanup prevents cross-account callbacks;
+- manual Vuk/Vito no-refresh convergence passed.
 
-Review note: the initial `SUBSCRIBED` callback can defensively cause one additional authoritative reload if it arrives after the first load. This is an efficiency detail, not a correctness blocker: it cannot write state, bypass revision checks or create a mount echo-save.
+### Step 8 — VERIFIED
+
+Final verification ran against main checkpoint `1e9b67d4a7755dafd26f31dff2aef73bb69da56e` and required no implementation changes.
+
+Verified:
+
+- Vuk, Vito and Mark authenticate successfully;
+- sessions survive refresh and sign-out returns to login;
+- same-browser account switching does not expose previous-user AppData;
+- all active users load the same authoritative Petalon state;
+- accepted shared writes persist and automatically converge in all three directions without refresh;
+- stale writes cannot silently overwrite newer revisions and use the deliberate conflict path;
+- anonymous API access is denied and anonymous table/update privileges are absent;
+- worker privilege protection remains effective;
+- live membership revocation denied protected load/save without deleting Auth or falling back to cached/local operational data;
+- restored membership returned access normally;
+- local/remote migrations are aligned through `20260826072628`;
+- `public.location_state` remains the only application table in `supabase_realtime`;
+- tests pass 49/49, production build passes and `git diff --check` passes;
+- no credentials were committed and KNO remained untouched.
+
+Final clean Petalon state after Step 8:
+
+- revision `33`;
+- 56/56 sets free;
+- 4/4 beds free;
+- no reservations, sunbed sales, Aquapark activity, transactions, report archive entries or saved surnames;
+- Vuk active `PLATFORM_OWNER`;
+- Vito active `WORKER`;
+- Mark active `WORKER`.
 
 Current Supabase advisor state remains:
 
@@ -95,28 +120,24 @@ Current Supabase advisor state remains:
 
 ## Immediate milestone
 
-**Shared Petalon v1 verification** — prove the merged Auth + shared persistence + realtime + RLS behavior across real separate sessions/devices, including stale conflicts and membership revocation.
+**Production Phone Deployment Readiness** — make the already-verified Shared Petalon v1 usable from the deployed Vercel Production URL on Vuk's phone.
 
-## Immediate next action — Step 8
+## Immediate next action
 
-After PR #14 merges, perform final separate-session/device verification.
+Audit and configure the Vercel Production deployment for the current merged `main`.
 
-Step 8 should verify at minimum:
+At minimum:
 
-- login/session persistence for Vuk, Vito and Mark;
-- all three load the same authoritative Petalon state;
-- accepted writes persist and converge automatically across open clients;
-- refresh preserves the accepted server state;
-- stale concurrent writes cannot silently overwrite newer state;
-- conflict UI/recovery remains conservative;
-- anonymous clients cannot access shared operational data;
-- inactive/no membership prevents protected Petalon reads/writes through RLS;
-- revocation does not expose a previous account's cached operational state;
-- realtime subscriptions cleanly follow sign-out/account switch;
-- cleanup leaves Petalon in a known valid operational state.
+- confirm the correct Vercel project/deployment is linked to `beach-set-manager`;
+- ensure Production has the browser-safe Beach Set Manager values for `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`;
+- never put a service-role/secret key or other privileged credential in the browser environment;
+- redeploy current `main` after environment changes because Vite injects `VITE_*` values at build time;
+- confirm the production build contains the current shared persistence + realtime implementation;
+- verify on Vuk's phone: login, shared state load, refresh/session persistence, normal write/save, realtime convergence with another session/device and sign-out/re-login;
+- keep the existing Auth/RLS/revision/conflict/realtime architecture unchanged unless an actual deployment-specific bug is discovered.
 
-Do not add user-specific Vuk/Vito/Mark product differences until this verification passes and is independently reviewed.
+Do not begin owner/worker UI differences until phone Production readiness is complete and independently reviewed.
 
 ## Deferred
 
-Do not block Shared Petalon v1 on device/session limits, offline writes, licensing, multi-location provisioning, white-labeling, infrastructure concealment or payment integrations.
+Do not block phone Production readiness on user-specific role UI, device/session limits, offline writes, licensing, multi-location provisioning, white-labeling, infrastructure concealment or payment integrations.
