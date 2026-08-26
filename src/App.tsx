@@ -1,167 +1,50 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { MutableRefObject } from 'react';
 import { AuthStatusPage, LoginPage } from './components/auth/LoginPage';
+import {
+  AQUAPARK_TICKETS,
+  createBeachSet,
+  createDefaultAppData,
+  createExtraBed,
+  createFreeBeachSets,
+  createFreeExtraBeds,
+  EXTRA_BED_IDS,
+  getBeachForSet,
+  getLocalDateKey,
+  TOTAL_SETS,
+} from './domain/appData';
+import type {
+  AppData,
+  AquaparkEntry,
+  AquaparkEntryDetails,
+  AquaparkPriceMode,
+  AquaparkTicketType,
+  ArchivedDailyReport,
+  BeachId,
+  BeachReservation,
+  BeachReservationDetails,
+  BeachSet,
+  BeachSetMap,
+  BedId,
+  BedStatus,
+  DailySale,
+  ExtraBed,
+  ExtraBedMap,
+  NonNumberedSunbedSale,
+  ReservationSurname,
+  SetPriceMode,
+  SetStatus,
+  Transaction,
+  TransactionType,
+} from './domain/appData';
 import type { AuthenticatedUser } from './services/auth/authService';
 import { useAuthSession } from './services/auth/useAuthSession';
+import { useSharedAppData } from './services/shared-state/useSharedAppData';
 import './App.css';
 
-type SetStatus = 'free' | 'paid' | 'reserved' | 'left';
-type BedStatus = Exclude<SetStatus, 'left'>;
-type BeachId = 1 | 2;
-type BedId = 1 | 2 | 3 | 4;
-type BedLabel = `Bed ${BedId}`;
-type ReservationSurname = string;
 type TabId = 'beaches' | 'sunbeds' | 'aquapark' | 'settings';
 type BeachShortcut = 'beach1' | 'beach2' | 'beds';
 type SettingsView = 'menu' | 'transactions' | 'report';
-type SetPriceMode = 'fixed' | 'special';
-type AquaparkTicketType = '30min' | '1hour' | 'half_day' | 'one_day' | 'one_week' | 'custom_days';
-type AquaparkPriceMode = 'default' | 'special';
-
-type BeachSet = {
-  id: number;
-  beach: BeachId;
-  status: SetStatus;
-  beachReservationId?: string;
-  surname?: string;
-  reservedDays?: number;
-  price?: number;
-  priceMode?: SetPriceMode;
-  dailySaleId?: string;
-  updatedAt?: string;
-};
-
-type ExtraBed = {
-  id: BedId;
-  label: BedLabel;
-  status: BedStatus;
-  beachReservationId?: string;
-  surname?: string;
-  reservedDays?: number;
-  price?: number;
-  priceMode?: SetPriceMode;
-  dailySaleId?: string;
-  updatedAt?: string;
-};
-
-type BeachReservation = {
-  id: string;
-  surname: string;
-  startDate: string;
-  endDate: string;
-  totalAmountPaid?: number;
-  paymentRecordedAt?: string;
-  reservedDays?: number;
-  notes?: string;
-  createdAt: string;
-  updatedAt?: string;
-};
-
-type BeachReservationDetails = {
-  surname: string;
-  startDate: string;
-  endDate: string;
-  totalAmountPaid?: number;
-  notes?: string;
-};
-
-type AquaparkEntry = {
-  id: string;
-  wristbands: number[];
-  ticketType: AquaparkTicketType;
-  defaultUnitPrice: number;
-  unitPrice: number;
-  totalPrice: number;
-  priceMode: AquaparkPriceMode;
-  status: 'active' | 'closed';
-  isLegacyPrice?: boolean;
-  startAt: string;
-  endAt?: string;
-  extraMinutes: number;
-  validUntil?: string;
-  customDays?: number;
-  dailyUnitPrice?: number;
-  description?: string;
-  createdAt: string;
-  closedAt?: string;
-  returnedWristbands: number[];
-};
-
-type NonNumberedSunbedSale = {
-  id: string;
-  quantity: number;
-  totalAmount: number;
-  description?: string;
-  createdAt: string;
-};
-
-type DailySale =
-  | {
-      id: string;
-      kind: 'beach_set';
-      setId: number;
-      amount: number;
-      createdAt: string;
-    }
-  | {
-      id: string;
-      kind: 'aquapark_entry';
-      entryId: string;
-      ticketType: AquaparkTicketType;
-      wristbandCount: number;
-      unitPrice: number;
-      customDays?: number;
-      amount: number;
-      createdAt: string;
-    }
-  | {
-      id: string;
-      kind: 'bed';
-      bedId: BedId;
-      amount: number;
-      createdAt: string;
-    }
-  | {
-      id: string;
-      kind: 'sunbed';
-      sunbedSaleId: string;
-      quantity: number;
-      amount: number;
-      createdAt: string;
-    };
-
-type TransactionType = 'beach_set' | 'bed' | 'sunbed' | 'beach_reservation' | 'aquapark';
-type Transaction = {
-  id: string;
-  type: TransactionType;
-  amount: number;
-  createdAt: string;
-  status?: 'active' | 'deleted';
-  deletedAt?: string;
-  resourceId?: string;
-  resourceLabel?: string;
-  description?: string;
-  metadata?: Record<string, unknown>;
-};
-
-type ArchivedDailyReport = {
-  date: string;
-  archivedAt: string;
-  transactions: Transaction[];
-};
-
-type AquaparkEntryDetails = {
-  wristbands: number[];
-  ticketType: AquaparkTicketType;
-  specialPrice?: number;
-  customDays?: number;
-  dailyUnitPrice?: number;
-  extraMinutes?: number;
-  description?: string;
-};
-
-type BeachSetMap = Record<number, BeachSet>;
-type ExtraBedMap = Record<BedId, ExtraBed>;
 type DetailMode = 'actions' | 'reserved';
 type ActiveEditor =
   | { kind: 'set'; id: number }
@@ -184,43 +67,16 @@ type BeachAssignment = {
   id: number;
   label: string;
 };
-type AppData = {
-  sets: BeachSetMap;
-  extraBeds: ExtraBedMap;
-  beachReservations: BeachReservation[];
-  savedSurnames: ReservationSurname[];
-  sunbedSales: NonNumberedSunbedSale[];
-  aquaparkEntries: AquaparkEntry[];
-  transactions: Transaction[];
-  reportArchive: ArchivedDailyReport[];
-  lastAutomaticResetDate?: string;
-};
 type BackupPayload = AppData & {
   app: 'Beach Set Manager';
   version: 12;
   exportedAt: string;
 };
 
-const TOTAL_SETS = 56;
-const STORAGE_KEY = 'sunbed-beach-manager:v5';
-const LEGACY_STORAGE_KEY = 'sunbed-beach-manager:v4';
-const OLDER_STORAGE_KEY = 'sunbed-beach-manager:v3';
-const OLD_STORAGE_KEY = 'sunbed-beach-manager:v2';
-const OLDEST_STORAGE_KEY = 'sunbed-beach-manager:v1';
-const APP_STORAGE_KEYS = [STORAGE_KEY, LEGACY_STORAGE_KEY, OLDER_STORAGE_KEY, OLD_STORAGE_KEY, OLDEST_STORAGE_KEY];
 const STATUS_ORDER: SetStatus[] = ['free', 'paid', 'reserved', 'left'];
 const BED_STATUS_ORDER: BedStatus[] = ['free', 'paid', 'reserved'];
 const BEACH_ONE_UPPER_ROW = [20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10];
 const BEACH_ONE_LOWER_ROW = [1, 2, 3, 4, 5, 6, 7, 8, 9];
-const EXTRA_BED_IDS: BedId[] = [1, 2, 3, 4];
-const AQUAPARK_TICKETS: Record<AquaparkTicketType, { label: string; price: number }> = {
-  '30min': { label: '30 minutes', price: 12 },
-  '1hour': { label: '1 hour', price: 14 },
-  half_day: { label: 'Half day', price: 20 },
-  one_day: { label: 'One day', price: 25 },
-  one_week: { label: 'One week', price: 99 },
-  custom_days: { label: 'Custom Days', price: 15 },
-};
 
 const STATUS_META: Record<SetStatus, { label: string; shortLabel: string }> = {
   free: { label: 'Free', shortLabel: 'Free' },
@@ -229,59 +85,6 @@ const STATUS_META: Record<SetStatus, { label: string; shortLabel: string }> = {
   left: { label: 'Left', shortLabel: 'Left' },
 };
 
-function getBeachForSet(id: number): BeachId {
-  return id <= 20 ? 1 : 2;
-}
-
-function createBeachSet(id: number, status: SetStatus = 'free'): BeachSet {
-  return {
-    id,
-    beach: getBeachForSet(id),
-    status,
-  };
-}
-
-function createExtraBed(id: BedId, status: BedStatus = 'free'): ExtraBed {
-  return {
-    id,
-    label: `Bed ${id}`,
-    status,
-  };
-}
-
-function createFreeBeachSets(): BeachSetMap {
-  return Object.fromEntries(
-    Array.from({ length: TOTAL_SETS }, (_, index) => {
-      const id = index + 1;
-      return [id, createBeachSet(id)];
-    }),
-  ) as BeachSetMap;
-}
-
-function createFreeExtraBeds(): ExtraBedMap {
-  return Object.fromEntries(EXTRA_BED_IDS.map((id) => [id, createExtraBed(id)])) as ExtraBedMap;
-}
-
-function createFreeAppData(): AppData {
-  return {
-    sets: createFreeBeachSets(),
-    extraBeds: createFreeExtraBeds(),
-    beachReservations: [],
-    savedSurnames: [],
-    sunbedSales: [],
-    aquaparkEntries: [],
-    transactions: [],
-    reportArchive: [],
-    lastAutomaticResetDate: getLocalDateKey(),
-  };
-}
-
-function getLocalDateKey(date = new Date()): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
 
 function normalizeResetDate(value: unknown): string | undefined {
   return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : undefined;
@@ -1140,170 +943,6 @@ function parseImportedAppData(value: unknown): AppData | null {
   };
 }
 
-function loadLegacyStatuses(): BeachSetMap | null {
-  const saved = window.localStorage.getItem(OLDEST_STORAGE_KEY);
-
-  if (!saved) {
-    return null;
-  }
-
-  const parsed = JSON.parse(saved) as Partial<Record<string, unknown>>;
-
-  return Object.fromEntries(
-    Array.from({ length: TOTAL_SETS }, (_, index) => {
-      const id = index + 1;
-      const status = parsed[String(id)];
-      return [id, createBeachSet(id, isSetStatus(status) ? status : 'free')];
-    }),
-  ) as BeachSetMap;
-}
-
-function loadSavedAppData(): AppData {
-  const defaults = createFreeAppData();
-
-  try {
-    const saved = window.localStorage.getItem(STORAGE_KEY);
-
-    if (saved) {
-      const parsed = JSON.parse(saved) as {
-        sets?: unknown;
-        extraBeds?: unknown;
-        beachReservations?: unknown;
-        savedSurnames?: unknown;
-        sunbedSales?: unknown;
-        aquaparkEntries?: unknown;
-        dailySales?: unknown;
-        transactions?: unknown;
-        reportArchive?: unknown;
-        lastAutomaticResetDate?: unknown;
-      };
-      const sets = parseSets(parsed.sets, true);
-      const extraBeds = parsed.extraBeds ? parseExtraBeds(parsed.extraBeds, true) : createFreeExtraBeds();
-
-      if (sets && extraBeds) {
-        const migratedBeachData = migrateLegacyBeachReservations(
-          sets,
-          extraBeds,
-          parseBeachReservations(parsed.beachReservations),
-        );
-
-        return {
-          sets: migratedBeachData.sets,
-          extraBeds: migratedBeachData.extraBeds,
-          beachReservations: migratedBeachData.beachReservations,
-          savedSurnames: normalizeSavedSurnames(parsed.savedSurnames),
-          sunbedSales: parseSunbedSales(parsed.sunbedSales),
-          aquaparkEntries: parseAquaparkEntries(parsed.aquaparkEntries),
-          transactions: addKnownReservationPaymentTransactions(parseTransactions(parsed.transactions, parsed.dailySales), migratedBeachData.beachReservations),
-          reportArchive: parseReportArchive(parsed.reportArchive),
-          lastAutomaticResetDate: normalizeResetDate(parsed.lastAutomaticResetDate),
-        };
-      }
-    }
-
-    const legacySaved = window.localStorage.getItem(LEGACY_STORAGE_KEY);
-
-    if (legacySaved) {
-      const parsed = JSON.parse(legacySaved) as {
-        sets?: unknown;
-        extraBeds?: unknown;
-        beachReservations?: unknown;
-        savedSurnames?: unknown;
-      };
-      const legacySets = parsed.sets ? parseSets(parsed.sets, true) : parseSets(parsed, true);
-      const legacyExtraBeds = parsed.extraBeds ? parseExtraBeds(parsed.extraBeds, true) : createFreeExtraBeds();
-
-      if (legacySets && legacyExtraBeds) {
-        const migratedBeachData = migrateLegacyBeachReservations(
-          legacySets,
-          legacyExtraBeds,
-          parseBeachReservations(parsed.beachReservations),
-        );
-
-        return {
-          sets: migratedBeachData.sets,
-          extraBeds: migratedBeachData.extraBeds,
-          beachReservations: migratedBeachData.beachReservations,
-          savedSurnames: normalizeSavedSurnames(parsed.savedSurnames),
-          sunbedSales: [],
-          aquaparkEntries: [],
-          transactions: [],
-          reportArchive: [],
-        };
-      }
-    }
-
-    const olderSaved = window.localStorage.getItem(OLDER_STORAGE_KEY);
-
-    if (olderSaved) {
-      const parsed = JSON.parse(olderSaved) as { sets?: unknown; extraBeds?: unknown };
-      const olderSets = parsed.sets ? parseSets(parsed.sets, true) : parseSets(parsed, true);
-      const olderExtraBeds = parsed.extraBeds ? parseExtraBeds(parsed.extraBeds, true) : createFreeExtraBeds();
-
-      if (olderSets && olderExtraBeds) {
-        const migratedBeachData = migrateLegacyBeachReservations(
-          olderSets,
-          olderExtraBeds,
-          [],
-        );
-
-        return {
-          sets: migratedBeachData.sets,
-          extraBeds: migratedBeachData.extraBeds,
-          beachReservations: migratedBeachData.beachReservations,
-          savedSurnames: [],
-          sunbedSales: [],
-          aquaparkEntries: [],
-          transactions: [],
-          reportArchive: [],
-        };
-      }
-    }
-
-    const oldSaved = window.localStorage.getItem(OLD_STORAGE_KEY);
-
-    if (oldSaved) {
-      const oldSets = parseSets(JSON.parse(oldSaved), true);
-
-      if (oldSets) {
-        const migratedBeachData = migrateLegacyBeachReservations(oldSets, createFreeExtraBeds(), []);
-
-        return {
-          sets: migratedBeachData.sets,
-          extraBeds: migratedBeachData.extraBeds,
-          beachReservations: migratedBeachData.beachReservations,
-          savedSurnames: [],
-          sunbedSales: [],
-          aquaparkEntries: [],
-          transactions: [],
-          reportArchive: [],
-        };
-      }
-    }
-
-    const oldestSets = loadLegacyStatuses();
-
-    if (oldestSets) {
-      const migratedBeachData = migrateLegacyBeachReservations(oldestSets, createFreeExtraBeds(), []);
-
-      return {
-        sets: migratedBeachData.sets,
-        extraBeds: migratedBeachData.extraBeds,
-        beachReservations: migratedBeachData.beachReservations,
-        savedSurnames: [],
-        sunbedSales: [],
-        aquaparkEntries: [],
-        transactions: [],
-        reportArchive: [],
-      };
-    }
-
-    return defaults;
-  } catch {
-    return defaults;
-  }
-}
-
 function getSets(start: number, end: number) {
   return Array.from({ length: end - start + 1 }, (_, index) => start + index);
 }
@@ -1601,17 +1240,25 @@ function createBackupPayload(appData: AppData): BackupPayload {
 }
 
 function OperationalApp({
+  initialSharedAppData,
+  sharedRevision,
+  sharedSyncStatus,
+  onAppDataChange,
   authenticatedUser,
   authActionError,
   signOutPending,
   onSignOut,
 }: {
+  initialSharedAppData: AppData;
+  sharedRevision: number;
+  sharedSyncStatus: 'saved' | 'saving';
+  onAppDataChange: (nextState: AppData) => void;
   authenticatedUser: AuthenticatedUser;
   authActionError: string | null;
   signOutPending: boolean;
   onSignOut: () => Promise<void>;
 }) {
-  const initialAppData = useMemo(() => initializeAppDataForToday(loadSavedAppData()), []);
+  const [initialAppData] = useState(() => initializeAppDataForToday(initialSharedAppData));
   const [sets, setSets] = useState<BeachSetMap>(() => initialAppData.sets);
   const [extraBeds, setExtraBeds] = useState<ExtraBedMap>(() => initialAppData.extraBeds);
   const [beachReservations, setBeachReservations] = useState<BeachReservation[]>(
@@ -1645,21 +1292,18 @@ function OperationalApp({
   const transactionsRef = useRef(transactions);
 
   useEffect(() => {
-    window.localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({
-        sets,
-        extraBeds,
-        beachReservations,
-        savedSurnames,
-        sunbedSales,
-        aquaparkEntries,
-        transactions,
-        reportArchive,
-        lastAutomaticResetDate,
-      }),
-    );
-  }, [sets, extraBeds, beachReservations, savedSurnames, sunbedSales, aquaparkEntries, transactions, reportArchive, lastAutomaticResetDate]);
+    onAppDataChange({
+      sets,
+      extraBeds,
+      beachReservations,
+      savedSurnames,
+      sunbedSales,
+      aquaparkEntries,
+      transactions,
+      reportArchive,
+      lastAutomaticResetDate,
+    });
+  }, [sets, extraBeds, beachReservations, savedSurnames, sunbedSales, aquaparkEntries, transactions, reportArchive, lastAutomaticResetDate, onAppDataChange]);
 
   useEffect(() => {
     transactionsRef.current = transactions;
@@ -2294,7 +1938,7 @@ function OperationalApp({
       }
 
       const confirmed = window.confirm(
-        'Import this backup and replace the current data saved on this phone/browser?',
+        'Import this backup and replace the current shared Petalon data? Other signed-in users will see it after reload.',
       );
 
       if (confirmed) {
@@ -2346,31 +1990,37 @@ function OperationalApp({
 
   function resetAppData() {
     const typed = window.prompt(
-      'Danger: this clears all Beach Set Manager data saved in this browser. Type RESET to continue.',
+      'Danger: this clears the shared Petalon operational data for every signed-in user. Type RESET to continue.',
     );
 
     if (typed === 'RESET') {
-      APP_STORAGE_KEYS.forEach((key) => window.localStorage.removeItem(key));
-      setSets(createFreeBeachSets());
-      setExtraBeds(createFreeExtraBeds());
-      setBeachReservations([]);
-      setSavedSurnames([]);
-      setSunbedSales([]);
-      setAquaparkEntries([]);
-      setTransactions([]);
+      const defaults = createDefaultAppData();
+      setSets(defaults.sets);
+      setExtraBeds(defaults.extraBeds);
+      setBeachReservations(defaults.beachReservations);
+      setSavedSurnames(defaults.savedSurnames);
+      setSunbedSales(defaults.sunbedSales);
+      setAquaparkEntries(defaults.aquaparkEntries);
+      setTransactions(defaults.transactions);
       transactionsRef.current = [];
-      setReportArchive([]);
-      const today = getLocalDateKey();
+      setReportArchive(defaults.reportArchive);
+      const today = defaults.lastAutomaticResetDate ?? getLocalDateKey();
       lastAutomaticResetDateRef.current = today;
       setLastAutomaticResetDate(today);
       closeEditor();
-      setBackupMessage('All app data cleared.');
+      setBackupMessage('Shared Petalon app data reset; saving...');
     }
   }
 
   return (
     <main className={`app-shell tab-${activeTab}${activeTab === 'beaches' ? ' beaches-active' : ''}`}>
       <TopNavigation activeTab={activeTab} onSelectTab={selectTab} />
+      <div className={`shared-sync-status shared-sync-${sharedSyncStatus}`} aria-live="polite">
+        <span className="shared-sync-dot" aria-hidden="true" />
+        {sharedSyncStatus === 'saving'
+          ? 'Saving shared data...'
+          : `Shared data saved - revision ${sharedRevision}`}
+      </div>
 
       <div className="page-content">
       {activeTab === 'sunbeds' ? (
@@ -3504,11 +3154,11 @@ function SettingsPage({ view, backupMessage, importInputRef, savedSurnames, onDa
     return <section className="settings-subpage"><button type="button" className="settings-back" onClick={onBackToSettings}>Back to Settings</button><ReportsPage transactions={transactions} reportArchive={reportArchive} /></section>;
   }
   return <section className="settings-page" aria-labelledby="settings-heading">
-    <header className="report-hero"><p className="eyebrow">Local app controls</p><h2 id="settings-heading">Settings</h2></header>
+    <header className="report-hero"><p className="eyebrow">Shared Petalon controls</p><h2 id="settings-heading">Settings</h2></header>
     <section className="settings-section"><h3>Records</h3><div className="settings-menu-actions"><button type="button" className="tool-button" onClick={onShowTransactions}>Transactions</button><button type="button" className="tool-button" onClick={onShowReport}>Reports</button></div></section>
-    <section className="settings-section"><h3>Daily Reset</h3><p>Start a fresh local business day and clear current-day sales.</p><button type="button" className="reset-button" onClick={onDailyReset}>Daily Reset</button></section>
-    <section className="settings-section"><h3>Backups</h3><p>Saved locally on this device. Other phones have separate data.</p><div className="tool-buttons"><button type="button" className="tool-button" onClick={onExport}>Export Backup</button><button type="button" className="tool-button" onClick={onImport}>Import Backup</button></div><input ref={importInputRef} className="file-input" type="file" accept="application/json,.json" onChange={(event) => onImportFile(event.target.files?.[0])} />{backupMessage ? <p className="backup-message">{backupMessage}</p> : null}</section>
-    <section className="settings-section"><h3>Local Tools</h3><button type="button" className="danger-link" onClick={onResetAppData}>Reset app data</button><SavedSurnamesManager savedSurnames={savedSurnames} onDeleteSurname={onDeleteSurname} /></section>
+    <section className="settings-section"><h3>Daily Reset</h3><p>Start a fresh shared business day and clear current-day sales.</p><button type="button" className="reset-button" onClick={onDailyReset}>Daily Reset</button></section>
+    <section className="settings-section"><h3>Backups</h3><p>Export the current shared Petalon state, or explicitly replace it by importing a compatible backup.</p><div className="tool-buttons"><button type="button" className="tool-button" onClick={onExport}>Export Backup</button><button type="button" className="tool-button" onClick={onImport}>Import Backup</button></div><input ref={importInputRef} className="file-input" type="file" accept="application/json,.json" onChange={(event) => onImportFile(event.target.files?.[0])} />{backupMessage ? <p className="backup-message">{backupMessage}</p> : null}</section>
+    <section className="settings-section"><h3>Shared Tools</h3><button type="button" className="danger-link" onClick={onResetAppData}>Reset shared app data</button><SavedSurnamesManager savedSurnames={savedSurnames} onDeleteSurname={onDeleteSurname} /></section>
     <section className="settings-section settings-account"><h3>Account</h3><p>Signed in as <strong>{authenticatedUser.email || 'Authenticated user'}</strong></p><button type="button" className="sign-out-button" disabled={signOutPending} onClick={() => void onSignOut()}>{signOutPending ? 'Signing out…' : 'Sign out'}</button>{authActionError ? <p className="auth-error settings-auth-error" role="alert">{authActionError}</p> : null}</section>
     <section className="settings-about" aria-label="About"><span>About</span><strong>Built for Camp Petalon</strong></section>
   </section>;
@@ -4317,6 +3967,10 @@ function BedIcon() {
 
 function App() {
   const auth = useAuthSession();
+  const shared = useSharedAppData(
+    auth.state.status === 'authenticated' ? auth.state.user.id : null,
+    parseImportedAppData,
+  );
 
   if (auth.state.status === 'initializing') {
     return (
@@ -4347,8 +4001,59 @@ function App() {
     );
   }
 
+  if (shared.state.status === 'loading') {
+    return (
+      <AuthStatusPage
+        title="Loading shared Petalon data"
+        message="Checking your active Petalon access and loading the current operational state..."
+        loading
+      />
+    );
+  }
+
+  if (shared.state.status === 'not-found') {
+    return (
+      <AuthStatusPage
+        title="Shared Petalon data is not set up"
+        message="No operational state is available for Petalon. Local browser data was not used."
+        actionLabel="Retry shared data"
+        onAction={() => void shared.reload()}
+      />
+    );
+  }
+
+  if (shared.state.status === 'conflict') {
+    const currentRevision = shared.state.current?.revision;
+    return (
+      <AuthStatusPage
+        title="Newer shared data exists"
+        message={`Another user saved Petalon first${currentRevision === undefined ? '' : ` at revision ${currentRevision}`}. Reloading shared data will discard this device's unsaved conflicting changes.`}
+        actionLabel="Reload shared data"
+        onAction={() => void shared.reload()}
+      />
+    );
+  }
+
+  if (shared.state.status === 'unavailable') {
+    return (
+      <AuthStatusPage
+        title="Shared Petalon data unavailable"
+        message={shared.state.phase === 'save'
+          ? `${shared.state.message} Changes on this device were not saved. Reloading will discard them.`
+          : `${shared.state.message} Local browser data was not used.`}
+        actionLabel="Reload shared data"
+        onAction={() => void shared.reload()}
+      />
+    );
+  }
+
   return (
     <OperationalApp
+      key={shared.state.generation}
+      initialSharedAppData={shared.state.data}
+      sharedRevision={shared.state.revision}
+      sharedSyncStatus={shared.state.syncStatus}
+      onAppDataChange={shared.update}
       authenticatedUser={auth.state.user}
       authActionError={auth.actionError}
       signOutPending={auth.signingOut}

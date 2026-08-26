@@ -4566,6 +4566,10 @@ button.existing-reservation-option {
   text-align: center;
 }
 
+.auth-status-action {
+  width: 100%;
+}
+
 .auth-spinner {
   width: 34px;
   height: 34px;
@@ -4591,9 +4595,53 @@ button.existing-reservation-option {
   margin-top: 2px;
 }
 
+.shared-sync-status {
+  position: fixed;
+  top: var(--cs-nav-height);
+  left: 50%;
+  z-index: 28;
+  width: min(100%, 720px);
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 5px 12px;
+  color: #52616d;
+  font-size: 0.72rem;
+  font-weight: 750;
+  background: rgba(246, 251, 255, 0.96);
+  border-bottom: 1px solid rgba(23, 32, 42, 0.1);
+  transform: translateX(-50%);
+  backdrop-filter: blur(14px);
+}
+
+.shared-sync-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #168c72;
+}
+
+.shared-sync-saving .shared-sync-dot {
+  background: #c37a18;
+  animation: shared-sync-pulse 0.9s ease-in-out infinite alternate;
+}
+
+.app-shell .page-content {
+  padding-top: calc(var(--cs-nav-height) + 42px);
+}
+
 @keyframes auth-spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes shared-sync-pulse {
+  to {
+    opacity: 0.35;
   }
 }
 
