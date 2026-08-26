@@ -3,6 +3,7 @@ import type {
   LoadSharedLocationStateResult,
   SaveSharedLocationStateResult,
   SharedLocationState,
+  SharedLocationStateListener,
   SharedLocationStateRepository,
 } from './repository';
 import { SharedStateController } from './sharedStateController';
@@ -55,9 +56,47 @@ class FakeRepository implements SharedLocationStateRepository<TestData> {
     (locationId: string, expectedRevision: number, nextState: TestData) =>
       this.saveHandler(locationId, expectedRevision, nextState),
   );
+  readonly subscriptions: Array<{
+    locationId: string;
+    listener: SharedLocationStateListener;
+    active: boolean;
+    unsubscribe: ReturnType<typeof vi.fn>;
+  }> = [];
+  readonly subscribe = vi.fn(
+    (locationId: string, listener: SharedLocationStateListener) => {
+      const subscription = {
+        locationId,
+        listener,
+        active: true,
+        unsubscribe: vi.fn(),
+      };
+      subscription.unsubscribe.mockImplementation(() => {
+        subscription.active = false;
+      });
+      this.subscriptions.push(subscription);
+      return subscription.unsubscribe;
+    },
+  );
 
-  subscribe() {
-    return () => undefined;
+  emitRevision(revision: number, subscriptionIndex = this.subscriptions.length - 1) {
+    const subscription = this.subscriptions[subscriptionIndex];
+    if (subscription?.active) {
+      subscription.listener({ locationId: LOCATION_ID, revision });
+    }
+  }
+
+  emitSubscribed(subscriptionIndex = this.subscriptions.length - 1) {
+    const subscription = this.subscriptions[subscriptionIndex];
+    if (subscription?.active) {
+      subscription.listener({ locationId: LOCATION_ID });
+    }
+  }
+
+  emitStaleCallback(revision: number, subscriptionIndex: number) {
+    this.subscriptions[subscriptionIndex]?.listener({
+      locationId: LOCATION_ID,
+      revision,
+    });
   }
 }
 
@@ -383,6 +422,232 @@ describe('SharedStateController', () => {
       data: { marker: 'server-normalized', value: 2 },
       revision: 5,
       syncStatus: 'saved',
+    });
+  });
+
+  it('automatically reloads a newer remote revision only while the client is clean', async () => {
+    const { repository, controller } = createController();
+    controller.activate();
+    await controller.reload();
+    repository.loadHandler = async () => ({
+      status: 'found',
+      value: sharedState({ marker: 'remote-user', value: 2 }, 5),
+    });
+
+    repository.emitRevision(5);
+    await flushPromises();
+
+    expect(repository.load).toHaveBeenCalledTimes(2);
+    expect(controller.getSnapshot()).toMatchObject({
+      status: 'ready',
+      data: { marker: 'remote-user', value: 2 },
+      revision: 5,
+      generation: 2,
+      syncStatus: 'saved',
+    });
+
+    controller.update({ marker: 'remote-user', value: 2 });
+    await flushPromises();
+    expect(repository.save).not.toHaveBeenCalled();
+  });
+
+  it('reloads authoritatively after a channel subscribe or reconnect may have missed changes', async () => {
+    const { repository, controller } = createController();
+    controller.activate();
+    await controller.reload();
+    repository.loadHandler = async () => ({
+      status: 'found',
+      value: sharedState({ marker: 'missed-while-disconnected', value: 2 }, 5),
+    });
+
+    repository.emitSubscribed();
+    await flushPromises();
+
+    expect(repository.load).toHaveBeenCalledTimes(2);
+    expect(controller.getSnapshot()).toMatchObject({
+      status: 'ready',
+      data: { marker: 'missed-while-disconnected', value: 2 },
+      revision: 5,
+    });
+    expect(repository.save).not.toHaveBeenCalled();
+  });
+
+  it('ignores old and own-save revision notifications', async () => {
+    const { repository, controller } = createController();
+    controller.activate();
+    await controller.reload();
+
+    repository.emitRevision(4);
+    controller.update({ marker: 'own-save', value: 2 });
+    await flushPromises();
+    repository.emitRevision(5);
+    await flushPromises();
+
+    expect(repository.load).toHaveBeenCalledTimes(1);
+    expect(controller.getSnapshot()).toMatchObject({
+      status: 'ready',
+      data: { marker: 'own-save', value: 2 },
+      revision: 5,
+    });
+  });
+
+  it('lets an in-flight save decide a remote race and preserves the conflict state', async () => {
+    const { repository, controller } = createController();
+    const save = deferred<SaveSharedLocationStateResult<TestData>>();
+    repository.saveHandler = () => save.promise;
+    controller.activate();
+    await controller.reload();
+
+    controller.update({ marker: 'local-race', value: 2 });
+    repository.emitRevision(5);
+    expect(repository.load).toHaveBeenCalledTimes(1);
+
+    save.resolve({
+      status: 'conflict',
+      current: sharedState({ marker: 'remote-winner', value: 3 }, 5),
+    });
+    await flushPromises();
+    repository.emitRevision(6);
+    await flushPromises();
+
+    expect(controller.getSnapshot()).toEqual({
+      status: 'conflict',
+      local: { marker: 'local-race', value: 2 },
+      current: sharedState({ marker: 'remote-winner', value: 3 }, 5),
+    });
+    expect(repository.load).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not discard a coalesced local mutation when an invalidation arrives', async () => {
+    const { repository, controller } = createController();
+    const firstSave = deferred<SaveSharedLocationStateResult<TestData>>();
+    const secondSave = deferred<SaveSharedLocationStateResult<TestData>>();
+    repository.saveHandler = vi
+      .fn()
+      .mockImplementationOnce(() => firstSave.promise)
+      .mockImplementationOnce(() => secondSave.promise);
+    controller.activate();
+    await controller.reload();
+
+    controller.update({ marker: 'first-local', value: 2 });
+    controller.update({ marker: 'latest-local', value: 3 });
+    repository.emitRevision(5);
+    expect(repository.load).toHaveBeenCalledTimes(1);
+
+    firstSave.resolve({
+      status: 'accepted',
+      value: sharedState({ marker: 'first-local', value: 2 }, 5),
+    });
+    await flushPromises();
+    expect(repository.save).toHaveBeenLastCalledWith(
+      LOCATION_ID,
+      5,
+      { marker: 'latest-local', value: 3 },
+    );
+
+    secondSave.resolve({
+      status: 'accepted',
+      value: sharedState({ marker: 'latest-local', value: 3 }, 6),
+    });
+    await flushPromises();
+
+    expect(controller.getSnapshot()).toMatchObject({
+      status: 'ready',
+      data: { marker: 'latest-local', value: 3 },
+      revision: 6,
+    });
+    expect(repository.load).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not let realtime clear an unavailable state', async () => {
+    const { repository, controller } = createController();
+    repository.saveHandler = async () => ({
+      status: 'unavailable',
+      error: { message: 'Membership inactive.', retryable: false },
+    });
+    controller.activate();
+    await controller.reload();
+    controller.update({ marker: 'not-saved', value: 2 });
+    await flushPromises();
+
+    repository.emitRevision(99);
+    await flushPromises();
+
+    expect(controller.getSnapshot()).toEqual({
+      status: 'unavailable',
+      phase: 'save',
+      message: 'Membership inactive.',
+      retryable: false,
+      local: { marker: 'not-saved', value: 2 },
+    });
+    expect(repository.load).toHaveBeenCalledTimes(1);
+  });
+
+  it('coalesces rapid invalidations into one reload plus the necessary follow-up', async () => {
+    const { repository, controller } = createController();
+    const firstReload = deferred<LoadSharedLocationStateResult<TestData>>();
+    const followUpReload = deferred<LoadSharedLocationStateResult<TestData>>();
+    controller.activate();
+    await controller.reload();
+    repository.loadHandler = vi
+      .fn()
+      .mockImplementationOnce(() => firstReload.promise)
+      .mockImplementationOnce(() => followUpReload.promise);
+
+    repository.emitRevision(5);
+    repository.emitRevision(6);
+    repository.emitRevision(7);
+    expect(repository.load).toHaveBeenCalledTimes(2);
+
+    firstReload.resolve({
+      status: 'found',
+      value: sharedState({ marker: 'remote-five', value: 5 }, 5),
+    });
+    await flushPromises();
+    expect(repository.load).toHaveBeenCalledTimes(3);
+
+    followUpReload.resolve({
+      status: 'found',
+      value: sharedState({ marker: 'remote-seven', value: 7 }, 7),
+    });
+    await flushPromises();
+
+    expect(repository.load).toHaveBeenCalledTimes(3);
+    expect(controller.getSnapshot()).toMatchObject({
+      status: 'ready',
+      data: { marker: 'remote-seven', value: 7 },
+      revision: 7,
+    });
+  });
+
+  it('owns one subscription per user-scoped controller and ignores stale callbacks', async () => {
+    const repository = new FakeRepository();
+    const controllerA = new SharedStateController(repository, LOCATION_ID, normalize);
+    controllerA.activate();
+    controllerA.activate();
+    await controllerA.reload();
+
+    expect(repository.subscribe).toHaveBeenCalledTimes(1);
+    controllerA.deactivate();
+    expect(repository.subscriptions[0].unsubscribe).toHaveBeenCalledTimes(1);
+
+    repository.loadHandler = async () => ({
+      status: 'found',
+      value: sharedState({ marker: 'user-b', value: 2 }, 5),
+    });
+    const controllerB = new SharedStateController(repository, LOCATION_ID, normalize);
+    controllerB.activate();
+    await controllerB.reload();
+    expect(repository.subscribe).toHaveBeenCalledTimes(2);
+
+    repository.emitStaleCallback(99, 0);
+    await flushPromises();
+
+    expect(repository.load).toHaveBeenCalledTimes(2);
+    expect(controllerB.getSnapshot()).toMatchObject({
+      status: 'ready',
+      data: { marker: 'user-b', value: 2 },
+      revision: 5,
     });
   });
 });
