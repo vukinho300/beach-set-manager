@@ -5,6 +5,7 @@ import type {
   LoadSharedLocationStateResult,
   SaveSharedLocationStateResult,
   SharedLocationState,
+  SharedLocationStateListener,
   SharedLocationStateRepository,
   SharedStateRepositoryError,
   Unsubscribe,
@@ -59,6 +60,8 @@ function providerUnavailable(
 class SupabaseSharedLocationStateRepository<T>
   implements SharedLocationStateRepository<T>
 {
+  private nextSubscriptionId = 0;
+
   constructor(private readonly client: SupabaseClient<Database> | null) {}
 
   async load(locationId: string): Promise<LoadSharedLocationStateResult<T>> {
@@ -128,13 +131,63 @@ class SupabaseSharedLocationStateRepository<T>
 
   subscribe(
     locationId: string,
-    listener: (value: SharedLocationState<T>) => void,
+    listener: SharedLocationStateListener,
   ): Unsubscribe {
-    // Realtime is intentionally deferred. The stable no-op unsubscribe keeps
-    // the repository contract safe without opening a Supabase channel.
-    void locationId;
-    void listener;
-    return () => undefined;
+    if (!this.client) {
+      return () => undefined;
+    }
+
+    let active = true;
+    const channel = this.client
+      .channel(`location-state:${locationId}:${++this.nextSubscriptionId}`)
+      .on<LocationStateRow>(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'location_state',
+          filter: `location_id=eq.${locationId}`,
+        },
+        (payload) => {
+          const row = payload.new;
+
+          if (
+            !active ||
+            row.location_id !== locationId ||
+            !Number.isSafeInteger(row.revision) ||
+            row.revision < 0
+          ) {
+            return;
+          }
+
+          // Realtime is an invalidation hint only. The controller reloads the
+          // authoritative row through load() before exposing new AppData.
+          listener({ locationId, revision: row.revision });
+        },
+      );
+
+    try {
+      channel.subscribe((status) => {
+        if (active && status === 'SUBSCRIBED') {
+          // A newly established or re-established channel may have missed a
+          // change before it was ready. Invalidate without trusting a payload.
+          listener({ locationId });
+        }
+      });
+    } catch {
+      active = false;
+      void this.client.removeChannel(channel).catch(() => undefined);
+      return () => undefined;
+    }
+
+    return () => {
+      if (!active) {
+        return;
+      }
+
+      active = false;
+      void this.client?.removeChannel(channel).catch(() => undefined);
+    };
   }
 
   private async readState(

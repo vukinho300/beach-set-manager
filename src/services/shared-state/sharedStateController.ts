@@ -2,7 +2,9 @@ import type {
   LoadSharedLocationStateResult,
   SaveSharedLocationStateResult,
   SharedLocationState,
+  SharedLocationStateInvalidation,
   SharedLocationStateRepository,
+  Unsubscribe,
 } from './repository';
 
 export type SharedStateControllerState<T> =
@@ -86,6 +88,12 @@ export class SharedStateController<T> {
   private saveInFlight = false;
   private pendingState: T | null = null;
   private paused = true;
+  private active = false;
+  private unsubscribe: Unsubscribe | null = null;
+  private invalidatedRevision: number | null = null;
+  private unversionedInvalidationPending = false;
+  private automaticReloadInFlight = false;
+  private lastAutomaticReloadTarget: number | null = null;
 
   constructor(
     private readonly repository: SharedLocationStateRepository<T>,
@@ -107,14 +115,41 @@ export class SharedStateController<T> {
     };
   }
 
+  activate(): void {
+    if (this.active) {
+      return;
+    }
+
+    this.active = true;
+    this.unsubscribe = this.repository.subscribe(
+      this.locationId,
+      (invalidation) => this.handleRemoteInvalidation(invalidation),
+    );
+  }
+
   deactivate(): void {
+    this.active = false;
+    this.unsubscribe?.();
+    this.unsubscribe = null;
     this.loadEpoch += 1;
     this.paused = true;
     this.pendingState = null;
     this.revision = null;
+    this.invalidatedRevision = null;
+    this.unversionedInvalidationPending = false;
+    this.automaticReloadInFlight = false;
+    this.lastAutomaticReloadTarget = null;
   }
 
   async reload(): Promise<void> {
+    this.invalidatedRevision = null;
+    this.unversionedInvalidationPending = false;
+    this.lastAutomaticReloadTarget = null;
+    await this.loadAuthoritativeState();
+    void this.drainRemoteInvalidations();
+  }
+
+  private async loadAuthoritativeState(): Promise<number | null> {
     const epoch = ++this.loadEpoch;
     this.paused = true;
     this.pendingState = null;
@@ -134,16 +169,16 @@ export class SharedStateController<T> {
           retryable: true,
         });
       }
-      return;
+      return null;
     }
 
     if (epoch !== this.loadEpoch) {
-      return;
+      return null;
     }
 
     if (result.status === 'not-found') {
       this.publish({ status: 'not-found' });
-      return;
+      return null;
     }
 
     if (result.status === 'unavailable') {
@@ -153,7 +188,7 @@ export class SharedStateController<T> {
         message: result.error.message,
         retryable: result.error.retryable,
       });
-      return;
+      return null;
     }
 
     const normalized = this.normalizeSharedValue(result.value);
@@ -165,13 +200,14 @@ export class SharedStateController<T> {
         message: 'Shared Petalon data is not valid operational application data.',
         retryable: false,
       });
-      return;
+      return null;
     }
 
     this.revision = normalized.revision;
     this.generation += 1;
     this.paused = false;
     this.publishReady(normalized, 'saved');
+    return normalized.revision;
   }
 
   update(nextState: T): void {
@@ -299,6 +335,7 @@ export class SharedStateController<T> {
     if (this.pendingState === null || this.equals(this.pendingState, accepted.state)) {
       this.pendingState = null;
       this.publishReady(accepted, 'saved');
+      void this.drainRemoteInvalidations();
       return;
     }
 
@@ -312,6 +349,102 @@ export class SharedStateController<T> {
       ...(accepted.updatedBy ? { updatedBy: accepted.updatedBy } : {}),
     });
     void this.drainSaves();
+  }
+
+  private handleRemoteInvalidation(
+    invalidation: SharedLocationStateInvalidation,
+  ): void {
+    if (
+      !this.active ||
+      invalidation.locationId !== this.locationId ||
+      (invalidation.revision !== undefined &&
+        (!Number.isSafeInteger(invalidation.revision) ||
+          invalidation.revision < 0)) ||
+      this.state.status === 'conflict' ||
+      this.state.status === 'unavailable' ||
+      this.state.status === 'not-found'
+    ) {
+      return;
+    }
+
+    if (
+      invalidation.revision !== undefined &&
+      this.revision !== null &&
+      invalidation.revision <= this.revision
+    ) {
+      return;
+    }
+
+    if (invalidation.revision === undefined) {
+      this.unversionedInvalidationPending = true;
+    } else {
+      this.invalidatedRevision = Math.max(
+        this.invalidatedRevision ?? invalidation.revision,
+        invalidation.revision,
+      );
+    }
+    void this.drainRemoteInvalidations();
+  }
+
+  private async drainRemoteInvalidations(): Promise<void> {
+    if (
+      !this.active ||
+      this.automaticReloadInFlight ||
+      this.saveInFlight ||
+      this.pendingState !== null ||
+      this.paused ||
+      this.revision === null ||
+      this.state.status !== 'ready' ||
+      this.state.syncStatus !== 'saved' ||
+      (!this.unversionedInvalidationPending && this.invalidatedRevision === null)
+    ) {
+      return;
+    }
+
+    if (
+      this.invalidatedRevision !== null &&
+      this.invalidatedRevision <= this.revision
+    ) {
+      this.invalidatedRevision = null;
+      if (!this.unversionedInvalidationPending) {
+        this.lastAutomaticReloadTarget = null;
+        return;
+      }
+    }
+
+    if (
+      !this.unversionedInvalidationPending &&
+      this.lastAutomaticReloadTarget !== null &&
+      this.invalidatedRevision !== null &&
+      this.invalidatedRevision <= this.lastAutomaticReloadTarget
+    ) {
+      return;
+    }
+
+    const targetRevision = this.invalidatedRevision;
+    this.invalidatedRevision = null;
+    this.unversionedInvalidationPending = false;
+    this.lastAutomaticReloadTarget = targetRevision;
+    this.automaticReloadInFlight = true;
+    const loadedRevision = await this.loadAuthoritativeState();
+    this.automaticReloadInFlight = false;
+
+    if (!this.active) {
+      return;
+    }
+
+    if (
+      loadedRevision !== null &&
+      targetRevision !== null &&
+      loadedRevision < targetRevision
+    ) {
+      this.invalidatedRevision = Math.max(
+        this.invalidatedRevision ?? targetRevision,
+        targetRevision,
+      );
+    }
+
+    void this.drainRemoteInvalidations();
   }
 
   private normalizeSharedValue(

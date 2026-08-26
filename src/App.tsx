@@ -1938,7 +1938,7 @@ function OperationalApp({
       }
 
       const confirmed = window.confirm(
-        'Import this backup and replace the current shared Petalon data? Other signed-in users will see it after reload.',
+        'Import this backup and replace the current shared Petalon data? Other signed-in users will receive it automatically after it saves.',
       );
 
       if (confirmed) {

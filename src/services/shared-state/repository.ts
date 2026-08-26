@@ -21,7 +21,15 @@ export type SaveSharedLocationStateResult<T> =
   | { status: 'conflict'; current: SharedLocationState<T> | null }
   | { status: 'unavailable'; error: SharedStateRepositoryError };
 
-export type SharedLocationStateListener<T> = (value: SharedLocationState<T>) => void;
+export type SharedLocationStateInvalidation = {
+  locationId: string;
+  /** Omitted when a channel subscribe/reconnect means events may have been missed. */
+  revision?: number;
+};
+
+export type SharedLocationStateListener = (
+  invalidation: SharedLocationStateInvalidation,
+) => void;
 export type Unsubscribe = () => void;
 
 /**
@@ -35,5 +43,5 @@ export interface SharedLocationStateRepository<T> {
     expectedRevision: number,
     nextState: T,
   ): Promise<SaveSharedLocationStateResult<T>>;
-  subscribe(locationId: string, listener: SharedLocationStateListener<T>): Unsubscribe;
+  subscribe(locationId: string, listener: SharedLocationStateListener): Unsubscribe;
 }

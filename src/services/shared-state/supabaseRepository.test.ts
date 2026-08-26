@@ -17,6 +17,13 @@ type QueryCall = {
   payload?: unknown;
 };
 
+type RealtimeFilter = {
+  event: string;
+  schema: string;
+  table: string;
+  filter: string;
+};
+
 const LOCATION_ID = '00000000-0000-4000-8000-000000000001';
 
 function stateRow(
@@ -35,7 +42,13 @@ function stateRow(
 
 class FakeSupabaseClient {
   readonly calls: QueryCall[] = [];
-  readonly channel = vi.fn();
+  readonly channels: FakeRealtimeChannel[] = [];
+  readonly channel = vi.fn((name: string) => {
+    const channel = new FakeRealtimeChannel(name);
+    this.channels.push(channel);
+    return channel;
+  });
+  readonly removeChannel = vi.fn(async () => 'ok');
   private readonly selectResponses = new Map<string, QueryResponse[]>();
   private readonly updateResponses = new Map<string, QueryResponse[]>();
 
@@ -111,6 +124,36 @@ class FakeSupabaseClient {
 
     target.set(table, responses);
     return response;
+  }
+}
+
+class FakeRealtimeChannel {
+  readonly onCalls: Array<{ type: string; filter: RealtimeFilter }> = [];
+  readonly subscribe = vi.fn((callback?: (status: string) => void) => {
+    this.statusCallback = callback ?? null;
+    return this;
+  });
+  private callback: ((payload: { new: LocationStateRow }) => void) | null = null;
+  private statusCallback: ((status: string) => void) | null = null;
+
+  constructor(readonly name: string) {}
+
+  on(
+    type: string,
+    filter: RealtimeFilter,
+    callback: (payload: { new: LocationStateRow }) => void,
+  ) {
+    this.onCalls.push({ type, filter });
+    this.callback = callback;
+    return this;
+  }
+
+  emit(row: LocationStateRow) {
+    this.callback?.({ new: row });
+  }
+
+  emitStatus(status: string) {
+    this.statusCallback?.(status);
   }
 }
 
@@ -300,16 +343,48 @@ describe('Supabase shared location state repository', () => {
     expect(unexplainedResult.status).toBe('unavailable');
   });
 
-  it('returns a stable no-op unsubscribe without creating a realtime channel', () => {
+  it('subscribes only to Petalon location_state updates and cleans up stably', () => {
     const fake = new FakeSupabaseClient();
     const repository = createSupabaseSharedLocationStateRepository(fake.asClient());
     const listener = vi.fn();
 
     const unsubscribe = repository.subscribe(LOCATION_ID, listener);
-    unsubscribe();
-    unsubscribe();
 
-    expect(fake.channel).not.toHaveBeenCalled();
-    expect(listener).not.toHaveBeenCalled();
+    expect(fake.channel).toHaveBeenCalledWith(`location-state:${LOCATION_ID}:1`);
+    expect(fake.channels[0].onCalls).toEqual([
+      {
+        type: 'postgres_changes',
+        filter: {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'location_state',
+          filter: `location_id=eq.${LOCATION_ID}`,
+        },
+      },
+    ]);
+    expect(fake.channels[0].subscribe).toHaveBeenCalledTimes(1);
+
+    fake.channels[0].emitStatus('SUBSCRIBED');
+    fake.channels[0].emit(stateRow(5, { marker: 'invalidation-only' }));
+    fake.channels[0].emit({
+      ...stateRow(6),
+      location_id: '00000000-0000-4000-8000-000000000002',
+    });
+
+    expect(listener).toHaveBeenCalledTimes(2);
+    expect(listener).toHaveBeenNthCalledWith(1, { locationId: LOCATION_ID });
+    expect(listener).toHaveBeenNthCalledWith(2, {
+      locationId: LOCATION_ID,
+      revision: 5,
+    });
+
+    unsubscribe();
+    unsubscribe();
+    fake.channels[0].emitStatus('SUBSCRIBED');
+    fake.channels[0].emit(stateRow(6));
+
+    expect(fake.removeChannel).toHaveBeenCalledTimes(1);
+    expect(fake.removeChannel).toHaveBeenCalledWith(fake.channels[0]);
+    expect(listener).toHaveBeenCalledTimes(2);
   });
 });

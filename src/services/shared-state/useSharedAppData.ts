@@ -71,6 +71,7 @@ export function useSharedAppData(
         setScopedState({ userId: authenticatedUserId, state });
       }
     });
+    controller.activate();
     void controller.reload();
 
     return () => {
