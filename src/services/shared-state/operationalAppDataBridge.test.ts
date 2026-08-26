@@ -13,8 +13,12 @@ describe('OperationalApp authoritative snapshot bridge', () => {
     const bridge = createOperationalAppDataBridge(initial);
 
     expect(stageAuthoritativeSnapshot(bridge, remote, areSharedStatesEqual)).toBe(true);
-    expect(consumeOperationalSnapshot(bridge, remote)).toBe(false);
-    expect(consumeOperationalSnapshot(bridge, { marker: 'local', value: 6 })).toBe(true);
+    expect(consumeOperationalSnapshot(bridge, remote, areSharedStatesEqual)).toBe(false);
+    expect(consumeOperationalSnapshot(
+      bridge,
+      { marker: 'local', value: 6 },
+      areSharedStatesEqual,
+    )).toBe(true);
   });
 
   it('does not stage an equal server snapshot or suppress the next real local change', () => {
@@ -26,6 +30,47 @@ describe('OperationalApp authoritative snapshot bridge', () => {
       { value: 4, marker: 'same' },
       areSharedStatesEqual,
     )).toBe(false);
-    expect(consumeOperationalSnapshot(bridge, { marker: 'local', value: 5 })).toBe(true);
+    expect(consumeOperationalSnapshot(
+      bridge,
+      { marker: 'local', value: 5 },
+      areSharedStatesEqual,
+    )).toBe(true);
+  });
+
+  it('forwards a worker mutation interleaved with an authoritative refresh', () => {
+    const initial = {
+      sets: { 40: { status: 'free' } },
+      aquaparkEntries: [],
+    };
+    const remote = {
+      sets: { 40: { status: 'left' } },
+      aquaparkEntries: [],
+    };
+    const remoteWithWorkerEntry = {
+      ...remote,
+      aquaparkEntries: [{ id: 'worker-entry', wristbands: [91] }],
+    };
+    const bridge = createOperationalAppDataBridge(initial);
+
+    expect(stageAuthoritativeSnapshot(bridge, remote, areSharedStatesEqual)).toBe(true);
+    expect(consumeOperationalSnapshot(
+      bridge,
+      remoteWithWorkerEntry,
+      areSharedStatesEqual,
+    )).toBe(true);
+    expect(bridge.pendingAuthoritativeSnapshot).toBeNull();
+    expect(consumeOperationalSnapshot(
+      bridge,
+      remote,
+      areSharedStatesEqual,
+    )).toBe(true);
+    expect(consumeOperationalSnapshot(
+      bridge,
+      { ...remoteWithWorkerEntry, aquaparkEntries: [
+        ...remoteWithWorkerEntry.aquaparkEntries,
+        { id: 'worker-entry-2', wristbands: [92] },
+      ] },
+      areSharedStatesEqual,
+    )).toBe(true);
   });
 });

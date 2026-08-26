@@ -1,12 +1,12 @@
 export type OperationalAppDataBridge<T> = {
   current: T;
-  suppressNextEmission: boolean;
+  pendingAuthoritativeSnapshot: T | null;
 };
 
 export function createOperationalAppDataBridge<T>(
   initial: T,
 ): OperationalAppDataBridge<T> {
-  return { current: initial, suppressNextEmission: false };
+  return { current: initial, pendingAuthoritativeSnapshot: null };
 }
 
 export function stageAuthoritativeSnapshot<T>(
@@ -19,19 +19,21 @@ export function stageAuthoritativeSnapshot<T>(
   }
 
   bridge.current = next;
-  bridge.suppressNextEmission = true;
+  bridge.pendingAuthoritativeSnapshot = next;
   return true;
 }
 
 export function consumeOperationalSnapshot<T>(
   bridge: OperationalAppDataBridge<T>,
   next: T,
+  equals: (first: T, second: T) => boolean,
 ): boolean {
+  const pendingAuthoritativeSnapshot = bridge.pendingAuthoritativeSnapshot;
   bridge.current = next;
-  if (!bridge.suppressNextEmission) {
+  if (pendingAuthoritativeSnapshot === null) {
     return true;
   }
 
-  bridge.suppressNextEmission = false;
-  return false;
+  bridge.pendingAuthoritativeSnapshot = null;
+  return !equals(next, pendingAuthoritativeSnapshot);
 }

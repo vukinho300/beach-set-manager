@@ -448,6 +448,14 @@ export class SharedStateController<T> {
       return server.revision;
     }
 
+    if (
+      normalizedPending.attemptedState !== undefined &&
+      normalizedPending.attemptedRevision !== undefined
+    ) {
+      this.publishPendingConflict(normalizedPending.desiredState, server);
+      return server.revision;
+    }
+
     const reconciled = this.reconcilePendingState?.(
       normalizedPending.baseState,
       normalizedPending.desiredState,
@@ -474,14 +482,18 @@ export class SharedStateController<T> {
       return server.revision;
     }
 
+    this.publishPendingConflict(normalizedPending.desiredState, server);
+    return server.revision;
+  }
+
+  private publishPendingConflict(local: T, current: SharedLocationState<T>): void {
     this.paused = true;
     this.publish({
       status: 'conflict',
-      local: normalizedPending.desiredState,
-      current: server,
+      local,
+      current,
       pendingPreserved: true,
     });
-    return server.revision;
   }
 
   private async resumePendingAgainstServer(
@@ -538,6 +550,10 @@ export class SharedStateController<T> {
       Number.isSafeInteger(record.attemptedRevision) &&
       (record.attemptedRevision ?? -1) >= 0 &&
       attemptedState !== null;
+
+    if (hasAttemptMetadata && !hasValidAttemptMetadata) {
+      return null;
+    }
 
     return {
       ...record,

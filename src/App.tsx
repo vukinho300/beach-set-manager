@@ -1417,7 +1417,11 @@ function OperationalApp({
       reportArchive,
       lastAutomaticResetDate,
     };
-    if (!consumeOperationalSnapshot(appDataBridgeRef.current, nextAppData)) {
+    if (!consumeOperationalSnapshot(
+      appDataBridgeRef.current,
+      nextAppData,
+      areSharedStatesEqual,
+    )) {
       return;
     }
 
