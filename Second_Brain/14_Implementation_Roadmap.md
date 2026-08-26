@@ -11,14 +11,24 @@ Status: `prototype_decision`
 5. ✅ **Step 5 completed** — browser Auth/session UX with persisted session, sign-out and no public signup. Merged in PR #10.
 6. ✅ **Step 6 completed** — authoritative Supabase AppData, server-first load, no operational localStorage fallback, serialized/coalesced revision-safe saves, conservative conflict/unavailable behavior and account-switch isolation. Merged in PR #12.
 7. ✅ **Step 7 completed** — filtered realtime invalidation, background authoritative reload model, revision suppression, save/pending/conflict safety and user-scoped subscription cleanup. Merged in PR #14.
-8. ✅ **Step 8 VERIFIED** — real Vuk/Vito/Mark verification of Auth/session, shared reads/writes, realtime convergence, stale conflict protection, anonymous denial, live revocation/restoration, worker privilege protection and final clean state. No implementation changes required.
-9. ✅ **Production phone deployment configured/working enough to expose real workflow evidence** — production public Supabase configuration works and the app is usable on phones.
-10. **Production Reliability R1 — independently reviewed, PR #17 pending merge:** keep realtime refresh in the background without remount/scroll resets; persist UI-only tab/scroll continuity; durably preserve unconfirmed AppData in user/location-scoped IndexedDB; bounded retry/resume; conservative conflict/recovery; narrow safe unattempted Beach reconciliation; prevent stale attempted records from resurrecting old state. Review corrections are included at head `70fc0657...`.
-11. **Next operational checkpoint:** merge/deploy R1 and validate under normal beach use. Do not treat role UI as higher priority than proving no silent entry loss or disruptive refresh remains.
-12. Add user-specific owner/worker UI/permission differences only after R1 is stable enough in normal production use.
-13. Migrate/refine individual domains into normalized tables later only when the whole-AppData JSONB model becomes an actual limitation.
+8. ✅ **Step 8 VERIFIED** — real Vuk/Vito/Mark verification of Auth/session, shared reads/writes, realtime convergence, stale conflict protection, anonymous denial, live revocation/restoration, worker privilege protection and final clean state.
+9. ✅ **Production Reliability R1 completed** — background convergence without remount/scroll reset; UI-only tab/scroll continuity; durable user/location-scoped IndexedDB recovery for unconfirmed AppData; bounded retry/resume; conservative attempted-save recovery and conflict handling. Merged in PR #17; Second Brain record merged in PR #18.
+10. **Step 9 — independently reviewed, PR #19 pending merge:** canonical three-role foundation: Vuk `PLATFORM_OWNER` / Platform Admin, Mark `LOCATION_ADMIN` / Location Owner, Vito `WORKER`; RLS-backed own-membership role loading; identity-scoped role state; Vuk+Mark location-management UI; Vito full normal operations without destructive shared tools; Mark live role drift corrected; verification expectations hardened. Includes fresh paid-set payment draft behavior so historical price no longer pre-fills the next payment intent.
+11. **Next product step — Mark Location Owner Dashboard:** define and implement a focused owner/manager dashboard on top of `LOCATION_ADMIN` without confusing owner-focused UI with confidential server-enforced data.
+12. Add trusted worker/location membership administration only after a safe server-side write path is designed; never ship service-role credentials to the browser.
+13. Migrate/refine individual domains into normalized tables only when the whole-AppData JSONB model becomes an actual limitation or when owner-only confidentiality/action-level authorization requires a separate boundary.
 
-## Reliability architecture now required by evidence
+## Canonical role hierarchy
+
+- `PLATFORM_OWNER` — Vuk — Platform Admin / software-platform authority and Petalon support access.
+- `LOCATION_ADMIN` — Mark — Location Owner / Petalon owner-manager experience.
+- `WORKER` — Vito — daily operational employee experience.
+
+All three currently keep normal operations. Location-management/destructive shared UI is available to Platform Admin and Location Owner, not Worker.
+
+This does not yet create semantic action-level database authorization inside the monolithic `location_state` JSONB update path.
+
+## Reliability architecture required by evidence
 
 - Supabase remains authoritative.
 - Initial Auth/shared access load may block; background realtime/reconnect refresh must not blank/remount working UI.
@@ -27,6 +37,14 @@ Status: `prototype_decision`
 - Current R1 uses a whole-AppData IndexedDB recovery snapshot, not a full immutable command outbox.
 - Attempted/ambiguous recovery must prefer preserved conflict over guessing or force overwrite.
 - Account/user scoping and RLS remain mandatory around every recovery path.
+
+## Mark Location Owner Dashboard guardrails
+
+Before implementation, decide which owner questions the dashboard answers.
+
+Owner-focused UX can summarize existing shared operational data, but if data must be truly confidential from Worker users it needs a separate RLS-protected server-side data boundary. Hiding shared `location_state` fields in React is not confidentiality.
+
+Do not create a generic admin console unless actual workflow requires it.
 
 ## Security hardening before broader production/commercial use
 
