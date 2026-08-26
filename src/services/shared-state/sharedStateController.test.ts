@@ -243,6 +243,36 @@ describe('SharedStateController', () => {
     });
   });
 
+  it('drops the previous user queued snapshot when that controller is deactivated', async () => {
+    const { repository, controller } = createController();
+    const firstSave = deferred<SaveSharedLocationStateResult<TestData>>();
+    let authenticatedUserId = 'user-a';
+    const savedAs: string[] = [];
+    repository.saveHandler = () => {
+      savedAs.push(authenticatedUserId);
+      return firstSave.promise;
+    };
+    await controller.reload();
+
+    controller.update({ marker: 'user-a-first', value: 2 });
+    controller.update({ marker: 'user-a-queued', value: 3 });
+    expect(repository.save).toHaveBeenCalledTimes(1);
+
+    controller.deactivate();
+    authenticatedUserId = 'user-b';
+    firstSave.resolve({
+      status: 'accepted',
+      value: sharedState({ marker: 'user-a-first', value: 2 }, 5),
+    });
+    await flushPromises();
+
+    controller.update({ marker: 'user-a-after-switch', value: 4 });
+    await flushPromises();
+
+    expect(repository.save).toHaveBeenCalledTimes(1);
+    expect(savedAs).toEqual(['user-a']);
+  });
+
   it('pauses automatic saves on conflict and retains both local and current server state', async () => {
     const { repository, controller } = createController();
     repository.saveHandler = async () => ({

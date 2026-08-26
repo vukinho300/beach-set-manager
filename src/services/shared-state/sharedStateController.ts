@@ -107,6 +107,13 @@ export class SharedStateController<T> {
     };
   }
 
+  deactivate(): void {
+    this.loadEpoch += 1;
+    this.paused = true;
+    this.pendingState = null;
+    this.revision = null;
+  }
+
   async reload(): Promise<void> {
     const epoch = ++this.loadEpoch;
     this.paused = true;
