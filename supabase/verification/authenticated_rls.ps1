@@ -14,6 +14,7 @@ $ExpectedUserIds = [ordered]@{
   Vito = '1723bcb9-6013-4aa7-821a-745859b3af87'
   Mark = 'e839a9e4-f86b-47d5-adaa-83779c4cd50f'
 }
+$ExpectedRoles = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'role_expectations.json') | ConvertFrom-Json
 
 function Assert-Condition {
   param(
@@ -292,13 +293,13 @@ $report.users = [ordered]@{
   Mark = [ordered]@{ email = $mark.Email; userId = $mark.UserId }
 }
 
-$provisionSql = "begin; insert into public.location_memberships (location_id, user_id, role, active) values ('$LocationId', '$($vuk.UserId)', 'PLATFORM_OWNER', true), ('$LocationId', '$($vito.UserId)', 'WORKER', true), ('$LocationId', '$($mark.UserId)', 'WORKER', true) on conflict (location_id, user_id) do update set role = excluded.role, active = excluded.active, updated_at = now(); insert into public.location_state (location_id, state, revision) values ('$LocationId', jsonb_build_object('schemaVersion', 1, 'purpose', 'step-3-rls-verification', 'operationalDataSeeded', false), 0) on conflict (location_id) do nothing; commit;"
+$provisionSql = "begin; insert into public.location_memberships (location_id, user_id, role, active) values ('$LocationId', '$($vuk.UserId)', '$($ExpectedRoles.Vuk)', true), ('$LocationId', '$($vito.UserId)', '$($ExpectedRoles.Vito)', true), ('$LocationId', '$($mark.UserId)', '$($ExpectedRoles.Mark)', true) on conflict (location_id, user_id) do update set role = excluded.role, active = excluded.active, updated_at = now(); insert into public.location_state (location_id, state, revision) values ('$LocationId', jsonb_build_object('schemaVersion', 1, 'purpose', 'step-3-rls-verification', 'operationalDataSeeded', false), 0) on conflict (location_id) do nothing; commit;"
 Invoke-AdminSql -Sql $provisionSql
 
 $report.memberships = [ordered]@{
-  Vuk = [ordered]@{ role = 'PLATFORM_OWNER'; active = $true; locationId = $LocationId }
-  Vito = [ordered]@{ role = 'WORKER'; active = $true; locationId = $LocationId }
-  Mark = [ordered]@{ role = 'WORKER'; active = $true; locationId = $LocationId }
+  Vuk = [ordered]@{ role = $ExpectedRoles.Vuk; active = $true; locationId = $LocationId }
+  Vito = [ordered]@{ role = $ExpectedRoles.Vito; active = $true; locationId = $LocationId }
+  Mark = [ordered]@{ role = $ExpectedRoles.Mark; active = $true; locationId = $LocationId }
 }
 
 $initialRows = @(Get-StateRows -Session $vuk)
@@ -308,9 +309,9 @@ $report.initialState = [ordered]@{
   revision = [long]$initialRows[0].revision
 }
 
-$report.activeRls.Vuk = Test-ActiveMember -Session $vuk -ExpectedRole 'PLATFORM_OWNER' -Sequence 1
-$report.activeRls.Vito = Test-ActiveMember -Session $vito -ExpectedRole 'WORKER' -Sequence 2
-$report.activeRls.Mark = Test-ActiveMember -Session $mark -ExpectedRole 'WORKER' -Sequence 3
+$report.activeRls.Vuk = Test-ActiveMember -Session $vuk -ExpectedRole $ExpectedRoles.Vuk -Sequence 1
+$report.activeRls.Vito = Test-ActiveMember -Session $vito -ExpectedRole $ExpectedRoles.Vito -Sequence 2
+$report.activeRls.Mark = Test-ActiveMember -Session $mark -ExpectedRole $ExpectedRoles.Mark -Sequence 3
 
 $revisionBeforeRows = @(Get-StateRows -Session $vuk)
 $revisionN = [long]$revisionBeforeRows[0].revision

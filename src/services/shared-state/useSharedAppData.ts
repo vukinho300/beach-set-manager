@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AppData } from '../../domain/appData';
+import { PETALON_LOCATION_ID } from '../../domain/petalon';
 import type { SharedLocationStateRepository } from './repository';
 import { reconcileCompatibleBeachSetPendingState } from './appDataPendingRecovery';
 import {
@@ -12,8 +13,6 @@ import {
   type SharedStateControllerState,
 } from './sharedStateController';
 import { createSupabaseSharedLocationStateRepository } from './supabaseRepository';
-
-export const PETALON_LOCATION_ID = '00000000-0000-4000-8000-000000000001';
 
 export type SharedAppDataSession = {
   state: SharedStateControllerState<AppData>;
