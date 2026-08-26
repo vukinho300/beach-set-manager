@@ -2,7 +2,7 @@
 
 Status: `canonical`
 Last reviewed: 2026-08-26
-Repository implementation checkpoint reviewed: `1e9b67d4a7755dafd26f31dff2aef73bb69da56e` (Step 8 final verification; no implementation changes required)
+Repository implementation checkpoint reviewed: `70fc0657a68a63b5a2aa46f79ffa370d52327893` (Production Reliability R1 / PR #17 head; independently reviewed, pending merge)
 
 This vault is the human-readable control center for `beach-set-manager` as it evolves from a local-only Petalon PWA into a secure shared operational application.
 
@@ -12,32 +12,28 @@ This vault is the human-readable control center for `beach-set-manager` as it ev
 
 ## Current phase
 
-**Shared Petalon v1 is VERIFIED.** The shared-platform, database/RLS, real-account authorization, repository-adapter, browser Auth/session, authoritative shared operational persistence and realtime-invalidation foundations are implemented, merged and now verified across all three real accounts.
+**Shared Petalon v1 is VERIFIED. Production Reliability R1 is independently reviewed and pending merge in PR #17.**
 
-Completed / verified foundation:
+Steps 1–8 established Auth/RLS, authoritative shared Supabase AppData, revision-safe saves, realtime invalidation and real three-account verification. Real phone use then exposed two production workflow failures: disruptive background reloads that reset the worker's position, and retryable connection failures that could discard newly entered Beach/Aquapark work before Supabase accepted it.
 
-- Step 1 / PR #3: browser Supabase dependency/environment contract, lazy client and provider-neutral versioned shared-state repository contract.
-- Step 2 / PR #5: dedicated `Beach Set Manager` Supabase project `uonovdnxfjqfjkhopxwg`, migrations for `locations`, `location_memberships` and `location_state`, RLS/least-privilege grants, deterministic Petalon identity, generated database types and revision-safe conditional writes.
-- Step 3 / PR #6: real Auth identities for Vuk, Vito and Mark, active Petalon memberships, authenticated verification, stale-write rejection, trigger-owned audit fields, revocation/restoration and worker privilege denials.
-- Step 4 / PR #8: typed Supabase-backed `SharedLocationStateRepository<T>` adapter with mandatory `location_id + expectedRevision`, RLS-aware load/save classification and conservative conflict handling.
-- Step 5 / PR #10: browser email/password authentication and persisted session UX with local sign-out and no public signup path.
-- Step 6 / PR #12: Supabase `location_state` became authoritative operational AppData; server-first load; controlled clean seed; revision-tracked serialized/coalesced saves; no operational localStorage fallback; conservative conflict/unavailable handling; backup/import/reset remain on the shared save path; account-switch isolation is bound to the current authenticated user/controller.
-- Step 7 / PR #14: filtered Supabase Postgres Changes invalidation for the Petalon `location_state` row; authoritative AppData still comes through repository `load()`; old/own revisions are ignored; in-flight/pending local work is protected; automatic reloads are serialized/coalesced; subscription lifecycle is user/controller scoped; `public.location_state` is published to `supabase_realtime` through a focused migration.
-- Step 8: final real three-account verification passed with no implementation changes required. Vuk, Vito and Mark authenticated, retained sessions across refresh, loaded the same authoritative state, converged automatically through realtime, and passed account-switch isolation. Anonymous access denial, stale-write conflict protection, worker privilege restrictions, live membership revocation/restoration and no-local-fallback behavior were all verified.
+R1 addresses those production findings without replacing Supabase as authority:
 
-Final Step 8 Petalon state:
+- background realtime/reconnect refresh stays inside the mounted operational UI instead of showing the blocking shared-data loader;
+- authoritative snapshots apply in place without echo saves;
+- active tab and per-tab scroll positions persist in UI-only localStorage;
+- cold reopen restores the worker's last tab/position after authoritative startup completes;
+- unconfirmed AppData is durably preserved in IndexedDB, scoped by authenticated user + Petalon location;
+- retryable failures keep optimistic entries visible and retry with bounded backoff plus online/focus/visibility recovery;
+- accepted saves clear the recovery record only after server acceptance/recognition;
+- ambiguous or incompatible newer-server states preserve pending work as conflict rather than force-overwrite;
+- only narrowly provable, unattempted compatible Beach-set edits may rebase automatically;
+- prior attempted-save metadata is treated conservatively so stale recovery data cannot resurrect a later legitimate Beach state;
+- account switch/sign-out cannot expose or submit another user's pending work;
+- RLS revocation remains authoritative.
 
-- revision `33`;
-- exactly one Petalon `location_state` row;
-- 56/56 sets free;
-- 4/4 beds free;
-- no reservations, sunbed sales, Aquapark activity, transactions, report archive entries or saved surnames;
-- Vuk, Vito and Mark memberships all restored active;
-- KNO remains separate and untouched.
+Review found and corrected two R1 races before approval: a blind no-echo boolean could swallow an interleaved worker mutation, and stale attempted recovery metadata could reapply an already-completed Beach state after a later server change. Both are fixed at PR #17 head `70fc0657...` with focused regressions. Reported verification after correction: 75/75 tests, build pass, `git diff --check` pass, plus real-phone continuity/network-recovery checks.
 
-Current known Supabase advisor items remain the provider-level leaked-password-protection warning and the informational unused `location_state_updated_by_idx` notice.
-
-The immediate operational next task is **Production Phone Deployment Readiness**: configure the Vercel deployment with the Beach Set Manager browser-safe Supabase public environment values, redeploy current `main`, and verify the real production URL on Vuk's phone including login, persisted session, shared state and realtime convergence. This is deployment/readiness work, not a new data-architecture step.
+KNO remains separate and untouched.
 
 ## Main navigation
 
@@ -72,10 +68,10 @@ The immediate operational next task is **Production Phone Deployment Readiness**
 
 ## Immediate objective
 
-Make the **verified Shared Petalon v1** available and verified on the real Vercel Production URL used from Vuk's phone, without weakening the existing Auth/RLS/revision/realtime architecture.
+Merge and deploy the reviewed R1 reliability layer, then use the real phone deployment under normal Petalon work and watch specifically for any remaining entry loss, duplicate recovery, conflict friction or position-reset behavior before introducing role-specific owner/worker UI differences.
 
 The frontend is not treated as a security boundary. A copied browser bundle must not grant access to Petalon data without a valid authenticated user and active membership.
 
-User-specific owner/worker UI differences, commercial white-labeling, multi-location deployment automation, advanced licensing and device controls remain later work.
+Commercial white-labeling, multi-location provisioning, advanced licensing and device controls remain later work.
 
 See [[11_Project_Status_and_Next_Actions]].
