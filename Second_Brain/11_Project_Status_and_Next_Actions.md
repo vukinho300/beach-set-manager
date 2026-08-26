@@ -4,7 +4,7 @@ Status: `canonical`
 
 ## Current state
 
-The React application still uses browser `localStorage` as its live operational persistence.
+Shared Petalon operational persistence is implemented and independently reviewed in Step 6 / PR #12, pending merge.
 
 Completed Shared Petalon foundations:
 
@@ -47,24 +47,41 @@ PR #8:
 - save always sends only `state` and always filters by `location_id + expectedRevision`;
 - stale zero-row writes become `conflict`, revoked/network/access cases remain `unavailable`;
 - no unconditional overwrite path;
-- realtime intentionally deferred;
-- focused adapter tests pass.
+- realtime intentionally deferred.
 
-### Step 5 — implemented and independently reviewed, PR #10 pending merge
+### Step 5 — merged
 
-PR #10 head `cebdaa2024e3d129d296d952ae20e61d4d0bbfe6`:
+PR #10:
 
 - normalized browser Auth boundary with `{ id, email }` user model;
 - Supabase email/password sign-in only; no signup/reset/OAuth paths;
-- persisted browser session restoration and one auth-state subscription with cleanup;
+- persisted browser session restoration and auth-state subscription cleanup;
 - controlled initializing/unauthenticated/unavailable/authenticated states;
-- existing operational app gated behind authentication;
-- Settings → Account sign-out using local Supabase sign-out;
-- sign-out does not erase operational localStorage;
-- missing public Supabase configuration fails safely;
-- focused Auth tests plus existing adapter tests pass 22/22;
-- Vuk manually verified Vuk/Vito/Mark login, session persistence across refresh, sign-out/re-login and preservation of existing local app data;
-- no operational Supabase AppData persistence, realtime, schema, Vercel or credential changes.
+- Settings sign-out without erasing operational browser data.
+
+### Step 6 — implemented and independently reviewed, PR #12 pending merge
+
+PR #12 head `f37a9bbe517f2c187c126f134b11d41eeb3afe88`:
+
+- extracted canonical AppData/domain types and default factories from `App.tsx` without a broad UI rewrite;
+- conditionally replaced only the exact Step 3 revision-4 verification marker with clean operational Petalon AppData;
+- initial clean seed contained 56 free sets, four free beds and no reservations, sales, transactions, reports or Aquapark activity;
+- Supabase `location_state` is now the operational source of truth;
+- authenticated application waits for server load before rendering editable operational state;
+- missing/unavailable/revoked/malformed shared state never falls back to operational localStorage;
+- the legacy `sunbed-beach-manager:v5` browser key is left physically untouched but is no longer read, written or deleted by the operational state lifecycle;
+- in-memory server revision is retained from load and advanced only by accepted server responses;
+- every save uses Petalon `location_id + expectedRevision` through the reviewed repository adapter;
+- at most one save is in flight; rapid local changes coalesce to the latest pending snapshot;
+- initial server mount does not create a redundant write;
+- stale conflicts stop automatic writes and require deliberate shared reload rather than forced overwrite;
+- save/backend/access unavailability suspends unsafe continued operation without localStorage fallback or automatic Auth sign-out;
+- backup import, Daily Reset and Reset app data remain explicit AppData mutations through the shared revision-safe save path;
+- realtime remains deferred;
+- Vuk manually verified shared persistence across separate Vuk/Vito sessions and refreshes, then restored the test sets to free;
+- after review, the account-switch isolation flaw was corrected: renderable shared state is tagged/bound to the current authenticated user ID, a user mismatch synchronously exposes loading, each identity gets a fresh controller, and deactivation invalidates old pending loads/saves/queued state;
+- the correction prevents a newly authenticated or revoked account from rendering the previous account's cached AppData during the React effect boundary;
+- test suite reported 41/41 passing after the correction, with build and `git diff --check` passing.
 
 Current Supabase advisor state remains:
 
@@ -73,27 +90,24 @@ Current Supabase advisor state remains:
 
 ## Immediate milestone
 
-**Shared Petalon v1** — Vuk, Vito and Mark can sign in, load the same Petalon state, make shared updates, see accepted changes, retain shared state after refresh, and be denied Petalon data when membership is inactive.
+**Shared Petalon v1** — Vuk, Vito and Mark can sign in, load the same authoritative Petalon state, save revision-safe shared updates and retain them after refresh. The next missing behavior is automatic cross-client convergence without manual refresh.
 
-## Immediate next action — Step 6
+## Immediate next action — Step 7
 
-Switch authenticated operational application load/save from browser localStorage to the reviewed Supabase `SharedLocationStateRepository<AppData>` path.
+After PR #12 merges, add realtime subscription or a minimal invalidation/reload mechanism so separate authenticated clients converge on accepted server state.
 
-Step 6 must be deliberate because the current remote `location_state` contains controlled verification data, not a valid operational AppData payload. Before the operational app consumes it, establish one controlled valid Petalon AppData state through a trusted/reproducible path. Do **not** automatically upload Vuk's current browser/localStorage data.
+Step 7 must preserve Step 6 safety:
 
-The live application should then:
+- Supabase remains authoritative;
+- no localStorage operational fallback;
+- do not bypass `location_id + expectedRevision` saves;
+- do not force-overwrite stale state;
+- incoming remote changes must not silently overwrite unsaved local changes or an in-flight save;
+- subscription lifecycle must remain bound to the current authenticated user/location and clean up on sign-out/account switch;
+- membership revocation must remain RLS-authoritative;
+- no offline queue or role-specific UI yet.
 
-- wait for the initial shared-state load before rendering operational data;
-- use Petalon location `00000000-0000-4000-8000-000000000001`;
-- treat the loaded Supabase revision as the save base;
-- save every accepted application state through the adapter with expected revision;
-- advance the in-memory revision only from accepted server responses;
-- never fall back to silent localStorage writes when Supabase is unavailable or membership is revoked;
-- surface loading, access/unavailable and conflict states safely;
-- preserve backup/import functionality as explicit user tools, but stop treating localStorage as operational shared truth once the switch is enabled;
-- keep realtime deferred to the following step.
-
-Do not automatically merge divergent local browser state into the server. Conflict resolution remains conservative until a later workflow explicitly defines reconciliation behavior.
+After realtime/invalidation is independently reviewed, Step 8 will perform final separate-session/device verification including shared reads/writes, automatic convergence, stale conflict behavior and revocation.
 
 ## Deferred
 

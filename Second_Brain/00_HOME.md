@@ -2,7 +2,7 @@
 
 Status: `canonical`
 Last reviewed: 2026-08-26
-Repository implementation checkpoint reviewed: `cebdaa2024e3d129d296d952ae20e61d4d0bbfe6` (PR #10 head; pending merge to main)
+Repository implementation checkpoint reviewed: `f37a9bbe517f2c187c126f134b11d41eeb3afe88` (PR #12 head; independently reviewed, pending merge to main)
 
 This vault is the human-readable control center for `beach-set-manager` as it evolves from a local-only Petalon PWA into a secure shared operational application.
 
@@ -12,19 +12,22 @@ This vault is the human-readable control center for `beach-set-manager` as it ev
 
 ## Current phase
 
-The shared-platform, database/RLS, real-account authorization, repository-adapter and browser Auth/session foundations now exist. The React application is still operationally `localStorage`-backed; Step 6 is the first step that will move operational truth to Supabase.
+The shared-platform, database/RLS, real-account authorization, repository-adapter, browser Auth/session and shared operational-persistence foundations now exist. Step 6 / PR #12 has been independently reviewed and is pending merge.
 
-Completed foundation:
+Completed / reviewed foundation:
 
 - Step 1 / PR #3: browser Supabase dependency/environment contract, lazy client and provider-neutral versioned shared-state repository contract.
 - Step 2 / PR #5: dedicated `Beach Set Manager` Supabase project `uonovdnxfjqfjkhopxwg`, migrations for `locations`, `location_memberships` and `location_state`, RLS/least-privilege grants, deterministic Petalon identity, generated database types and revision-safe conditional writes.
 - Step 3 / PR #6: real Auth identities for Vuk, Vito and Mark, active Petalon memberships, controlled non-operational initial state and authenticated verification proving active-member access, stale-write rejection, trigger-owned audit fields, same-session membership revocation/restoration and worker privilege denials.
 - Step 4 / PR #8: typed Supabase-backed `SharedLocationStateRepository<T>` adapter with RLS-aware load classification, mandatory `location_id + expectedRevision` saves, conflict classification and focused tests.
-- Step 5 / PR #10: minimal browser email/password authentication and session UX. It restores Supabase sessions across refresh, gates the existing operational app behind authentication, supports local sign-out, has no signup path, and preserves existing localStorage operational behavior. Vuk manually verified login with all three real accounts, refresh persistence and sign-out/re-login.
+- Step 5 / PR #10: minimal browser email/password authentication and session UX with persisted session restoration, local sign-out and no signup path.
+- Step 6 / PR #12: Supabase `location_state` becomes authoritative operational AppData; server-first load; controlled clean Petalon seed; revision-tracked serialized/coalesced saves; conservative conflict/unavailable handling; no operational localStorage fallback; backup/import/reset continue through the shared save path. A review-found account-switch isolation issue was corrected by binding renderable shared state to the current authenticated user ID and invalidating/deactivating the previous user controller.
 
-KNO remains separate and untouched. Realtime is not implemented yet. Operational AppData has not yet been migrated or uploaded to Supabase.
+The current Petalon server state originated from a controlled clean operational seed: 56 free sets, four free beds and no operational activity. Manual Vuk/Vito cross-session verification proved shared writes and refresh persistence. Realtime is still intentionally deferred.
 
-The current implementation target is Step 6: switch authenticated application load/save from browser localStorage to the reviewed Supabase shared-state repository with explicit controlled initial operational state, revision-aware saves and safe failure/conflict behavior. Do not automatically upload Vuk's existing browser data.
+KNO remains separate and untouched.
+
+The next implementation target after PR #12 merges is Step 7: add realtime subscription or equivalent invalidation/reload behavior so separate clients converge on accepted server changes without requiring a manual page refresh.
 
 ## Main navigation
 
@@ -54,8 +57,8 @@ The current implementation target is Step 6: switch authenticated application lo
 - Non-numbered Sunbeds: quantity + amount + description sales.
 - Aquapark: wristbands, ticket types, prices, timing, extra time, returned wristbands, expiry highlighting.
 - Transactions: current-day ledger with deletion audit state.
-- Reports: current-day totals and local Report Archive behavior implemented in the browser application.
-- Settings: transactions, reports, reset, backups/local tools.
+- Reports: current-day totals and Report Archive behavior.
+- Settings: transactions, reports, reset, backups/shared tools and account sign-out.
 
 ## Immediate objective
 
