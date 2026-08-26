@@ -2,7 +2,7 @@
 
 Status: `canonical`
 Last reviewed: 2026-08-26
-Repository implementation checkpoint reviewed: `70fc0657a68a63b5a2aa46f79ffa370d52327893` (Production Reliability R1 / PR #17 head; independently reviewed, pending merge)
+Repository implementation checkpoint reviewed: `1ef3b037cfde097180f467fde432a15ed8d495ce` (Step 9 / PR #19 head; independently reviewed, pending merge)
 
 This vault is the human-readable control center for `beach-set-manager` as it evolves from a local-only Petalon PWA into a secure shared operational application.
 
@@ -12,26 +12,28 @@ This vault is the human-readable control center for `beach-set-manager` as it ev
 
 ## Current phase
 
-**Shared Petalon v1 is VERIFIED. Production Reliability R1 is independently reviewed and pending merge in PR #17.**
+**Shared Petalon v1 and Production Reliability R1 are merged. Step 9's three-role product foundation is independently reviewed in PR #19 and pending merge.**
 
-Steps 1–8 established Auth/RLS, authoritative shared Supabase AppData, revision-safe saves, realtime invalidation and real three-account verification. Real phone use then exposed two production workflow failures: disruptive background reloads that reset the worker's position, and retryable connection failures that could discard newly entered Beach/Aquapark work before Supabase accepted it.
+The canonical Petalon role model is now explicit:
 
-R1 addresses those production findings without replacing Supabase as authority:
+- `PLATFORM_OWNER` — Vuk; product label **Platform Admin**; private platform/developer authority plus normal Petalon use.
+- `LOCATION_ADMIN` — Mark; product label **Location Owner**; owner/manager of the Petalon location plus normal operations.
+- `WORKER` — Vito; product label **Worker**; full daily operational workflow without destructive location-management UI.
 
-- background realtime/reconnect refresh stays inside the mounted operational UI instead of showing the blocking shared-data loader;
-- authoritative snapshots apply in place without echo saves;
-- active tab and per-tab scroll positions persist in UI-only localStorage;
-- cold reopen restores the worker's last tab/position after authoritative startup completes;
-- unconfirmed AppData is durably preserved in IndexedDB, scoped by authenticated user + Petalon location;
-- retryable failures keep optimistic entries visible and retry with bounded backoff plus online/focus/visibility recovery;
-- accepted saves clear the recovery record only after server acceptance/recognition;
-- ambiguous or incompatible newer-server states preserve pending work as conflict rather than force-overwrite;
-- only narrowly provable, unattempted compatible Beach-set edits may rebase automatically;
-- prior attempted-save metadata is treated conservatively so stale recovery data cannot resurrect a later legitimate Beach state;
-- account switch/sign-out cannot expose or submit another user's pending work;
-- RLS revocation remains authoritative.
+Step 9 corrects prior implementation drift where Mark had been provisioned as `WORKER`. The live Petalon membership was verified active and changed only from `WORKER` to `LOCATION_ADMIN`; Vuk and Vito were left unchanged. The authenticated verification script now reads canonical role expectations from `supabase/verification/role_expectations.json` so future verification does not revert Mark.
 
-Review found and corrected two R1 races before approval: a blind no-echo boolean could swallow an interleaved worker mutation, and stale attempted recovery metadata could reapply an already-completed Beach state after a later server change. Both are fixed at PR #17 head `70fc0657...` with focused regressions. Reported verification after correction: 75/75 tests, build pass, `git diff --check` pass, plus real-phone continuity/network-recovery checks.
+Role state comes from the current authenticated user's own RLS-readable `location_memberships` row for Petalon. It is identity-scoped so account switches cannot briefly expose another user's role/capabilities. No email, user metadata or frontend UUID map is used for role inference.
+
+Current product capability split:
+
+- all three roles retain normal Beaches, Beds, reservations, Sunbeds, Aquapark, transactions/reports, Daily Reset, realtime and R1 durability/recovery behavior;
+- Vuk and Mark can see location-management/destructive shared tools such as Import Backup and Full Reset Shared App Data;
+- Vito does not receive those destructive controls in the normal UI;
+- this is currently a product/UI capability boundary, not complete action-level database authorization, because all active members still need broad revision-safe updates to the monolithic `location_state` JSONB row for ordinary work.
+
+Step 9 also fixes the paid-set editor workflow: historical `set.price`/`priceMode` remain saved for transaction/revenue/reporting purposes, but each newly opened set-payment editor starts with a fresh zero/blank draft. A previous EUR 12 payment no longer pre-fills the next payment intent.
+
+Production Reliability R1 remains required architecture: background realtime convergence must not remount or reset the worker's position, UI-only tab/scroll continuity is persisted separately, and unconfirmed operational work is durably protected in user/location-scoped IndexedDB with conservative retry/conflict recovery.
 
 KNO remains separate and untouched.
 
@@ -64,11 +66,13 @@ KNO remains separate and untouched.
 - Aquapark: wristbands, ticket types, prices, timing, extra time, returned wristbands, expiry highlighting.
 - Transactions: current-day ledger with deletion audit state.
 - Reports: current-day totals and Report Archive behavior.
-- Settings: transactions, reports, reset, backups/shared tools and account sign-out.
+- Settings: role-aware records, resets, backups/shared tools and account state.
 
 ## Immediate objective
 
-Merge and deploy the reviewed R1 reliability layer, then use the real phone deployment under normal Petalon work and watch specifically for any remaining entry loss, duplicate recovery, conflict friction or position-reset behavior before introducing role-specific owner/worker UI differences.
+Merge Step 9, then design the **Mark Location Owner Dashboard** on top of the reusable `LOCATION_ADMIN` role/capability foundation.
+
+The dashboard must distinguish owner-facing UX from genuinely confidential owner data. Anything already readable through the shared `location_state` row is not made confidential merely by hiding it from Worker UI; truly owner-only financial/management data will require its own RLS-protected server boundary.
 
 The frontend is not treated as a security boundary. A copied browser bundle must not grant access to Petalon data without a valid authenticated user and active membership.
 
