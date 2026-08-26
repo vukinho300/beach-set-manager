@@ -2,7 +2,7 @@
 
 Status: `canonical`
 Last reviewed: 2026-08-26
-Repository implementation checkpoint reviewed: `f37a9bbe517f2c187c126f134b11d41eeb3afe88` (PR #12 head; independently reviewed, pending merge to main)
+Repository implementation checkpoint reviewed: `7af26050fd596e46db1ecaffaba957b61ffa19f8` (PR #14 head; independently reviewed, pending merge to main)
 
 This vault is the human-readable control center for `beach-set-manager` as it evolves from a local-only Petalon PWA into a secure shared operational application.
 
@@ -12,7 +12,7 @@ This vault is the human-readable control center for `beach-set-manager` as it ev
 
 ## Current phase
 
-The shared-platform, database/RLS, real-account authorization, repository-adapter, browser Auth/session and shared operational-persistence foundations now exist. Step 6 / PR #12 has been independently reviewed and is pending merge.
+The shared-platform, database/RLS, real-account authorization, repository-adapter, browser Auth/session, authoritative shared operational persistence and realtime-invalidation foundations now exist. Step 7 / PR #14 has been independently reviewed and is pending merge.
 
 Completed / reviewed foundation:
 
@@ -21,13 +21,12 @@ Completed / reviewed foundation:
 - Step 3 / PR #6: real Auth identities for Vuk, Vito and Mark, active Petalon memberships, controlled non-operational initial state and authenticated verification proving active-member access, stale-write rejection, trigger-owned audit fields, same-session membership revocation/restoration and worker privilege denials.
 - Step 4 / PR #8: typed Supabase-backed `SharedLocationStateRepository<T>` adapter with RLS-aware load classification, mandatory `location_id + expectedRevision` saves, conflict classification and focused tests.
 - Step 5 / PR #10: minimal browser email/password authentication and session UX with persisted session restoration, local sign-out and no signup path.
-- Step 6 / PR #12: Supabase `location_state` becomes authoritative operational AppData; server-first load; controlled clean Petalon seed; revision-tracked serialized/coalesced saves; conservative conflict/unavailable handling; no operational localStorage fallback; backup/import/reset continue through the shared save path. A review-found account-switch isolation issue was corrected by binding renderable shared state to the current authenticated user ID and invalidating/deactivating the previous user controller.
+- Step 6 / PR #12: Supabase `location_state` became authoritative operational AppData; server-first load; controlled clean Petalon seed; revision-tracked serialized/coalesced saves; conservative conflict/unavailable handling; no operational localStorage fallback; backup/import/reset continue through the shared save path; account-switch isolation is bound to the current authenticated user/controller.
+- Step 7 / PR #14: filtered Supabase Postgres Changes subscription for Petalon `location_state`; realtime payloads are invalidation hints only; authoritative AppData still comes through repository `load()`; old/own revisions are ignored; remote invalidations wait behind local saves/pending mutations; conflict/unavailable states remain conservative; automatic reloads are serialized/coalesced; subscription lifecycle is user/controller scoped; `public.location_state` is added to `supabase_realtime` through a focused migration.
 
-The current Petalon server state originated from a controlled clean operational seed: 56 free sets, four free beds and no operational activity. Manual Vuk/Vito cross-session verification proved shared writes and refresh persistence. Realtime is still intentionally deferred.
+Manual Vuk/Vito verification proved automatic convergence in both directions without manual refresh, including cleanup convergence. KNO remains separate and untouched.
 
-KNO remains separate and untouched.
-
-The next implementation target after PR #12 merges is Step 7: add realtime subscription or equivalent invalidation/reload behavior so separate clients converge on accepted server changes without requiring a manual page refresh.
+The next implementation target after PR #14 merges is Step 8: final separate-session/device verification of login/session persistence, shared reads/writes, automatic convergence, refresh persistence, stale-write conflict behavior, no-anon/no-member denial and membership revocation.
 
 ## Main navigation
 
@@ -62,19 +61,7 @@ The next implementation target after PR #12 merges is Step 7: add realtime subsc
 
 ## Immediate objective
 
-Build **Shared Petalon v1**:
-
-- dedicated Beach Set Manager Supabase project;
-- Supabase Auth accounts for Vuk, Vito and Mark;
-- one Petalon location;
-- one shared database-backed application state;
-- Row Level Security on every exposed application table;
-- active location membership as the access/revocation boundary;
-- revision-checked shared state so stale writes cannot silently overwrite newer data;
-- realtime or equivalent refresh behavior so all three users see accepted changes;
-- no device/session-seat enforcement;
-- no offline write queue;
-- no multi-location provisioning automation yet.
+Complete **Shared Petalon v1** by independently verifying the already-implemented shared/realtime behavior across real separate sessions/devices before introducing user-specific differences.
 
 The frontend is not treated as a security boundary. A copied browser bundle must not grant access to Petalon data without a valid authenticated user and active membership.
 
