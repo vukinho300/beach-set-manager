@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AppData } from '../../domain/appData';
 import type { SharedLocationStateRepository } from './repository';
+import { reconcileCompatibleBeachSetPendingState } from './appDataPendingRecovery';
+import {
+  createIndexedDbPendingSharedStateStore,
+  type PendingSharedStateStore,
+} from './pendingSharedStateStore';
 import {
   SharedStateController,
   type NormalizeSharedState,
@@ -36,9 +41,11 @@ export function useSharedAppData(
   authenticatedUserId: string | null,
   normalize: NormalizeSharedState<AppData>,
   repository?: SharedLocationStateRepository<AppData>,
+  pendingStore?: PendingSharedStateStore<AppData>,
 ): SharedAppDataSession {
   const [configuration] = useState(() => ({
     repository: repository ?? createSupabaseSharedLocationStateRepository<AppData>(),
+    pendingStore: pendingStore ?? createIndexedDbPendingSharedStateStore<AppData>(),
     normalize,
   }));
   const controllerRef = useRef<{
@@ -63,6 +70,11 @@ export function useSharedAppData(
       configuration.repository,
       PETALON_LOCATION_ID,
       configuration.normalize,
+      {
+        userId: authenticatedUserId,
+        pendingStore: configuration.pendingStore,
+        reconcilePendingState: reconcileCompatibleBeachSetPendingState,
+      },
     );
     const binding = { userId: authenticatedUserId, controller };
     controllerRef.current = binding;
@@ -74,7 +86,20 @@ export function useSharedAppData(
     controller.activate();
     void controller.reload();
 
+    const handleResume = () => controller.resume();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        controller.resume();
+      }
+    };
+    window.addEventListener('online', handleResume);
+    window.addEventListener('focus', handleResume);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     return () => {
+      window.removeEventListener('online', handleResume);
+      window.removeEventListener('focus', handleResume);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       unsubscribe();
       controller.deactivate();
       if (controllerRef.current === binding) {

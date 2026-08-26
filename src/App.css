@@ -4629,6 +4629,22 @@ button.existing-reservation-option {
   animation: shared-sync-pulse 0.9s ease-in-out infinite alternate;
 }
 
+.shared-sync-pending {
+  color: #744b12;
+  background: rgba(255, 247, 226, 0.97);
+  border-bottom-color: rgba(195, 122, 24, 0.28);
+}
+
+.shared-sync-pending .shared-sync-dot,
+.shared-refresh-stale .shared-sync-dot {
+  background: #c37a18;
+  animation: shared-sync-pulse 0.9s ease-in-out infinite alternate;
+}
+
+.shared-refresh-refreshing .shared-sync-dot {
+  animation: shared-sync-pulse 0.9s ease-in-out infinite alternate;
+}
+
 .app-shell .page-content {
   padding-top: calc(var(--cs-nav-height) + 42px);
 }
