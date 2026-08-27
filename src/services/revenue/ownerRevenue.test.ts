@@ -80,6 +80,33 @@ describe('owner multi-location revenue summary', () => {
     expect(summary.missingRealRevenueLocations).toEqual(['Koversada']);
   });
 
+  it('retains today App Revenue after Daily Reset clears the current ledger', () => {
+    const resetState = {
+      ...createCleanLocationAppData('PETALON_FULL', '2026-08-28'),
+      transactions: [],
+      reportArchive: [{
+        date: '2026-08-28',
+        archivedAt: '2026-08-28T18:00:00.000Z',
+        transactions: [{
+          id: 'pre-reset-revenue',
+          type: 'beach_set' as const,
+          amount: 1450,
+          createdAt: '2026-08-28T17:30:00.000Z',
+        }],
+      }],
+    };
+    const summary = buildOwnerRevenueSummary(
+      [memberships[0]],
+      '2026-08-28',
+      new Map([['petalon', resetState]]),
+      new Map([['petalon', 1450]]),
+      '2026-08-28',
+    );
+
+    expect(summary.locations[0].appRevenue).toBe(1450);
+    expect(summary.combinedAppRevenue).toBe(1450);
+  });
+
   it('does not interpret a missing historical location report as €0', () => {
     const summary = buildOwnerRevenueSummary(
       memberships,

@@ -48,6 +48,7 @@ import {
   type LocationMetadata,
 } from './domain/location';
 import {
+  archiveTransactionsForDate,
   calculateDailyRevenue,
   getZagrebBusinessDate,
 } from './domain/revenue';
@@ -788,23 +789,6 @@ function parseReportArchive(value: unknown): ArchivedDailyReport[] {
     const transactions = parseTransactions(candidate.transactions);
     return [...reports, { date, archivedAt, transactions }];
   }, []).sort((first, second) => second.date.localeCompare(first.date));
-}
-
-function archiveTransactionsForDate(
-  archive: ArchivedDailyReport[],
-  date: string | undefined,
-  transactions: Transaction[],
-): ArchivedDailyReport[] {
-  if (!date || !isLocalDateKey(date) || archive.some((report) => report.date === date)) return archive;
-
-  const report: ArchivedDailyReport = {
-    date,
-    archivedAt: new Date().toISOString(),
-    transactions: transactions.map((transaction) => ({ ...transaction })),
-  };
-
-  return [report, ...archive]
-    .sort((first, second) => second.date.localeCompare(first.date));
 }
 
 function addKnownReservationPaymentTransactions(transactions: Transaction[], reservations: BeachReservation[]): Transaction[] {
