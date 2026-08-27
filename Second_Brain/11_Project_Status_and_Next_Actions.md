@@ -1,93 +1,95 @@
 # Project Status and Next Actions
 
 Status: `canonical`
+Last reviewed: 2026-08-27
 
 ## Current state
 
-**Shared Petalon v1 and Production Reliability R1 are merged. Step 9 / PR #19 is independently reviewed and pending merge.**
+Shared Petalon v1, Production Reliability R1 and Step 9 are merged. Canonical roles remain:
 
-Steps 1–8 remain the verified shared foundation: browser Auth/session, RLS membership boundary, authoritative Supabase `location_state`, revision-safe conditional writes, realtime invalidation, account isolation, anonymous denial, worker privilege restrictions and live membership revocation/restoration.
+- Vuk — `PLATFORM_OWNER` — Platform Admin;
+- Mark — `LOCATION_ADMIN` — Location Owner;
+- Vito — `WORKER` — Worker.
 
-Production Reliability R1 is now merged and is part of the required production architecture:
+Step 10 / Koversada was initiated but is **paused**. At the time of the First Incident no Step 10 frontend/schema/location/membership changes had reached Production; only an isolated Koversada Auth user had been created.
 
-- background realtime/reconnect refresh does not remount the operational app;
-- active tab and per-tab scroll continuity are preserved separately from shared AppData;
-- unconfirmed operational mutations are durably preserved in user/location-scoped IndexedDB;
-- retryable network failures retain optimistic work and retry conservatively;
-- attempted/ambiguous recovery prefers preserved conflict over forced overwrite;
-- stale attempted Beach snapshots cannot resurrect later legitimate server state;
-- account switch/sign-out cannot expose or submit another user's pending work.
+## First Incident — highest-priority reliability evidence
 
-## Step 9 — independently reviewed, PR #19 pending merge
+On 2026-08-27, during a real Petalon round on Vuk's installed iPhone Home Screen PWA, roughly twenty visible operational entries never reached Supabase. Vito discovered the discrepancy from Android roughly 20–30 minutes later while working concurrently.
 
-Canonical roles:
+Server evidence proves the missing work was not accepted and later overwritten. The exact iOS/browser exception is not proven. The incident exposed a broader architectural problem: the old UI could remain interactive while its pre-network durability/write pipeline was unhealthy.
 
-- Vuk — `PLATFORM_OWNER` — **Platform Admin**;
-- Mark — `LOCATION_ADMIN` — **Location Owner**;
-- Vito — `WORKER` — **Worker**.
+Canonical incident record and permanent rules: [[18_Production_Incidents_and_Never_Again_Rules]].
 
-Step 9 findings/changes:
+## Production Reliability R2 — Draft PR #25
 
-- the Second Brain already documented Mark as the future `LOCATION_ADMIN`, but the old Step 3 verification script and the live membership had drifted to `WORKER`;
-- Mark's production membership was verified active `WORKER` and corrected only to active `LOCATION_ADMIN`; Vuk/Vito were untouched;
-- `supabase/verification/role_expectations.json` now records the canonical roles and the credential-local authenticated verification script consumes those expectations;
-- the browser loads the current user's own Petalon membership/role through RLS and scopes it to the current Auth user identity;
-- no role inference from email, user metadata, display name or frontend UUID map;
-- product labels are Platform Admin, Location Owner and Worker;
-- all three retain normal operations and Daily Reset;
-- Vuk and Mark receive location-management/destructive shared UI such as Import Backup and Full Reset Shared App Data;
-- Vito keeps normal Beaches/Aquapark/reservation/reports/transactions/Export Backup workflow but does not receive those destructive controls;
-- this is explicitly product/UI capability gating, not complete semantic action-level DB authorization while all operational data remains one broadly writable revision-safe `location_state` JSONB row.
+R2 is the immediate release gate. Corrected reviewed head currently referenced by the Second Brain: `cfc465fe34f177accb7d605153fd8a1f80effbce`.
 
-Paid-set editor correction included in Step 9:
+R2 introduces:
 
-- prior root cause: a new Set editor initialized payment draft fields from historical persisted `set.price` / `priceMode`;
-- new behavior: every Set payment editor opens with fixed total `0`, fixed/default mode and blank special price;
-- historical transaction/revenue/reporting data remains untouched;
-- opening/closing the editor alone creates no AppData mutation or revision;
-- Extra Bed has a similar historical-price initialization pattern but was deliberately left outside Step 9 scope.
+- explicit shared-write admission instead of silent controller returns;
+- bounded pending-store and IndexedDB operations;
+- distinct device-safety state (`safe`, `securing`, `durable`, `blocked`);
+- hard fail-closed UX when a visible mutation cannot be durably secured;
+- blocking of additional operational mutations while the first unsafe mutation is unresolved;
+- in-memory emergency recovery export;
+- user/location-scoped localStorage + IndexedDB recovery paths;
+- privacy-safe client write-stage telemetry via a narrow membership-checked RPC;
+- preservation of R1 CAS, conservative conflict and ambiguous-attempt recovery;
+- explicit distinction between a normal incoming authoritative Realtime snapshot and genuine unadmitted local divergence.
 
-Reported Step 9 verification:
+R2 is **not approved for Production yet**. Unit/build checks are not sufficient after the First Incident.
 
-- 92/92 tests across 12 files;
-- production build passed;
-- `git diff --check` passed;
-- PowerShell verification-script syntax passed;
-- R1 regression suite passed;
-- manual Vuk, Mark and Vito role checks passed;
-- paid-set EUR 12 regression passed;
-- realtime/no-jump smoke passed.
+## Required R2 release verification
 
-KNO remains untouched.
+Before merge/deploy:
 
-## Immediate milestone
+1. affected iPhone Home Screen PWA Preview test;
+2. at least ten entry → background/close → reopen cycles;
+3. lock/unlock and app switching;
+4. 15–20 reversible walking-style operations;
+5. concurrent second-device Realtime updates from Vito/another account;
+6. proof incoming authoritative updates do not create false STOP/locking;
+7. controlled durability-hang test using the Preview-only seam;
+8. proof hard STOP blocks the next operational action;
+9. proof emergency recovery export contains the exact visible unsafe state.
 
-**Mark Location Owner Dashboard** — build the first owner/manager-focused experience on top of the Step 9 `LOCATION_ADMIN` role/capability foundation.
+## Next preventative database milestone — Reliability R3
 
-## Immediate next action
+The First Incident is evidence that the whole-AppData snapshot/revision model should not be considered the final commercial write architecture.
 
-After PR #19 and the Step 9 Second Brain PR merge:
+After R2 is proven, design an immutable client operation/outbox and idempotent server-command model:
 
-1. Define the owner dashboard's exact business questions before coding.
-2. Prefer a focused dashboard for Mark rather than a generic admin console.
-3. Reuse the current authoritative AppData/reports only for information that is acceptable as owner-focused UX.
-4. Explicitly identify any dashboard information that must be confidential from Vito. Such data must not merely be hidden in React; it needs a separate RLS-protected server boundary.
-5. Do not add browser service-role credentials or broad membership-admin writes.
-6. Preserve all R1 reliability behavior and the normal operational workflow.
+- one stable UUID `operation_id` per business action;
+- durable local operation record retained across retries/reopen;
+- append-only protected server operation ledger;
+- narrow authenticated commands/RPCs that derive `auth.uid()` and verify active location membership;
+- duplicate retry of the same `operation_id` returns the previous result rather than creating another transaction;
+- revenue-affecting operations create immutable/voidable financial ledger entries atomically;
+- progressively move contention from one whole-location revision to the relevant entity/version so independent workers can operate concurrently.
 
-Likely owner-dashboard candidates to decide with Vuk before implementation:
+See [[18_Production_Incidents_and_Never_Again_Rules]].
 
-- current/today revenue overview;
-- breakdown by Beaches/Sunbeds/Aquapark;
-- report/archive access and trends;
-- current operational status/occupancy summary;
-- owner-level backup/destructive tools already authorized in Step 9;
-- future worker/location management only after designing a trusted write path.
+## Koversada / multi-location requirement after reliability gate
 
-## Deferred / later
+Koversada is the real second location and should use the same application/database deployment.
 
-- True confidential/action-level owner authorization requires a separate RLS-protected server boundary where needed; the monolithic `location_state` JSONB cannot provide semantic action authorization by itself.
-- Full worker add/remove/role-management UI remains deferred until a trusted management path is designed.
-- Extra Bed payment-draft reset remains a possible later workflow fix if Vuk wants the same fresh-payment behavior there.
-- Full immutable offline command/outbox + server operation-id idempotency remains a later architecture if R1's whole-AppData pending snapshot proves insufficient.
-- Device/session limits, licensing, multi-location provisioning, white-labeling, infrastructure concealment and payment integrations remain deferred.
+Initial operating model:
+
+- Koversada Worker A — Koversada `WORKER`, Aquapark-only interface;
+- Vuk — access to Petalon and Koversada; primarily operates Petalon and monitors/manages Koversada;
+- Mark — access to both locations; monitors/manages both;
+- Vito — Petalon only.
+
+Next season Koversada is expected to have two workers operating simultaneously. They should be separate Auth users with identical Koversada Worker capability rather than sharing one account. Multi-user Realtime and concurrent writes are therefore core requirements, not edge cases.
+
+## Immediate order
+
+1. Finish R2 correction review.
+2. Pass affected-iPhone/concurrent-device Preview verification.
+3. Merge/deploy R2 only after manual PASS.
+4. Observe realistic production behavior.
+5. Design/implement the R3 operation/idempotency foundation at the appropriate point before commercial maturity and high-concurrency Koversada use.
+6. Resume Step 10 only with the First Incident Never-Again Rules treated as release invariants.
+
+KNO remains separate and untouched.
