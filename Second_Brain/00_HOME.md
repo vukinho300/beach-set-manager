@@ -1,8 +1,8 @@
 # Beach Management Platform — Second Brain
 
 Status: `canonical`
-Last reviewed: 2026-08-26
-Repository implementation checkpoint reviewed: `1ef3b037cfde097180f467fde432a15ed8d495ce` (Step 9 / PR #19 head; independently reviewed, pending merge)
+Last reviewed: 2026-08-27
+Repository implementation checkpoint reviewed: `cfc465fe34f177accb7d605153fd8a1f80effbce` (R2 / PR #25 corrected head; pending affected-iPhone release verification)
 
 This vault is the human-readable control center for `beach-set-manager` as it evolves from a local-only Petalon PWA into a secure shared operational application.
 
@@ -12,28 +12,19 @@ This vault is the human-readable control center for `beach-set-manager` as it ev
 
 ## Current phase
 
-**Shared Petalon v1 and Production Reliability R1 are merged. Step 9's three-role product foundation is independently reviewed in PR #19 and pending merge.**
+**Shared Petalon v1, Production Reliability R1 and Step 9 are merged. Step 10 / Koversada is paused because the 2026-08-27 First Incident proved the write path required another reliability gate. Production Reliability R2 is in Draft PR #25 and is not yet approved for Production.**
 
-The canonical Petalon role model is now explicit:
+Canonical Petalon roles:
 
-- `PLATFORM_OWNER` — Vuk; product label **Platform Admin**; private platform/developer authority plus normal Petalon use.
-- `LOCATION_ADMIN` — Mark; product label **Location Owner**; owner/manager of the Petalon location plus normal operations.
-- `WORKER` — Vito; product label **Worker**; full daily operational workflow without destructive location-management UI.
+- `PLATFORM_OWNER` — Vuk; product label **Platform Admin**.
+- `LOCATION_ADMIN` — Mark; product label **Location Owner**.
+- `WORKER` — Vito; product label **Worker**.
 
-Step 9 corrects prior implementation drift where Mark had been provisioned as `WORKER`. The live Petalon membership was verified active and changed only from `WORKER` to `LOCATION_ADMIN`; Vuk and Vito were left unchanged. The authenticated verification script now reads canonical role expectations from `supabase/verification/role_expectations.json` so future verification does not revert Mark.
+Production Reliability R1 remains baseline architecture: background authoritative convergence must not remount/reset working UI; tab/scroll continuity is device UI state; unconfirmed work receives user/location-scoped recovery protection; conflicts remain conservative.
 
-Role state comes from the current authenticated user's own RLS-readable `location_memberships` row for Petalon. It is identity-scoped so account switches cannot briefly expose another user's role/capabilities. No email, user metadata or frontend UUID map is used for role inference.
+The **First Incident** is now a permanent architecture reference. During a real iPhone Home Screen PWA round, roughly twenty visible operational entries never reached Supabase. The server revision chain proves the work was not accepted and later overwritten. The exact client exception is unproven. See [[18_Production_Incidents_and_Never_Again_Rules]].
 
-Current product capability split:
-
-- all three roles retain normal Beaches, Beds, reservations, Sunbeds, Aquapark, transactions/reports, Daily Reset, realtime and R1 durability/recovery behavior;
-- Vuk and Mark can see location-management/destructive shared tools such as Import Backup and Full Reset Shared App Data;
-- Vito does not receive those destructive controls in the normal UI;
-- this is currently a product/UI capability boundary, not complete action-level database authorization, because all active members still need broad revision-safe updates to the monolithic `location_state` JSONB row for ordinary work.
-
-Step 9 also fixes the paid-set editor workflow: historical `set.price`/`priceMode` remain saved for transaction/revenue/reporting purposes, but each newly opened set-payment editor starts with a fresh zero/blank draft. A previous EUR 12 payment no longer pre-fills the next payment intent.
-
-Production Reliability R1 remains required architecture: background realtime convergence must not remount or reset the worker's position, UI-only tab/scroll continuity is persisted separately, and unconfirmed operational work is durably protected in user/location-scoped IndexedDB with conservative retry/conflict recovery.
+R2 adds fail-closed write safety, bounded device-durability operations, explicit controller admission, privacy-safe sync telemetry and hard-stop recovery behavior. The corrected PR #25 also distinguishes incoming authoritative Realtime convergence from genuine unadmitted local divergence. R2 still requires real affected-iPhone Preview testing before merge/deploy.
 
 KNO remains separate and untouched.
 
@@ -56,6 +47,7 @@ KNO remains separate and untouched.
 15. [[15_Open_Questions_and_Clarifications]]
 16. [[16_Experiments_and_Evidence]]
 17. [[17_Domain_and_Production_Branding]]
+18. [[18_Production_Incidents_and_Never_Again_Rules]]
 
 ## Current product areas
 
@@ -70,12 +62,13 @@ KNO remains separate and untouched.
 
 ## Immediate objective
 
-Merge Step 9, then design the **Mark Location Owner Dashboard** on top of the reusable `LOCATION_ADMIN` role/capability foundation.
+1. Finish R2 / PR #25 review and affected-iPhone Preview verification.
+2. Deploy R2 only after realistic Home Screen PWA close/reopen, concurrent-worker, walking-style and forced-failure tests pass.
+3. Design **Reliability R3: immutable client operations/outbox + idempotent server operation ledger/commands** as the next preventative database architecture.
+4. Resume Step 10 / Koversada only without weakening First Incident Never-Again Rules.
 
-The dashboard must distinguish owner-facing UX from genuinely confidential owner data. Anything already readable through the shared `location_state` row is not made confidential merely by hiding it from Worker UI; truly owner-only financial/management data will require its own RLS-protected server boundary.
+Koversada is a real shared second location: its worker(s) operate it while Vuk and Mark may monitor concurrently; future architecture must support multiple independent Koversada worker accounts/devices rather than one shared worker identity.
 
-The frontend is not treated as a security boundary. A copied browser bundle must not grant access to Petalon data without a valid authenticated user and active membership.
+The frontend is not a security boundary. A copied browser bundle must not grant location data without a valid authenticated user and active membership.
 
-Commercial white-labeling, multi-location provisioning, advanced licensing and device controls remain later work.
-
-See [[11_Project_Status_and_Next_Actions]].
+See [[11_Project_Status_and_Next_Actions]] and [[18_Production_Incidents_and_Never_Again_Rules]].
