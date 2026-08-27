@@ -2256,7 +2256,11 @@ function OperationalApp({
   return (
     <main className={`app-shell tab-${activeTab}${activeTab === 'beaches' ? ' beaches-active' : ''}`}>
       <TopNavigation activeTab={activeTab} onSelectTab={selectTab} />
-      <div className={`shared-sync-status shared-sync-${sharedSyncStatus} shared-refresh-${sharedRefreshStatus}`} aria-live="polite">
+      <div
+        className={`shared-sync-status shared-sync-${sharedSyncStatus} shared-refresh-${sharedRefreshStatus}`}
+        role={sharedSyncStatus === 'pending' ? 'alert' : 'status'}
+        aria-live={sharedSyncStatus === 'pending' ? 'assertive' : 'polite'}
+      >
         <span className="shared-sync-dot" aria-hidden="true" />
         {sharedSyncMessage ?? (
           sharedSyncStatus === 'saving'
