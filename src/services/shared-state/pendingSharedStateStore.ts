@@ -41,23 +41,65 @@ const STORE_NAME = 'pendingStates';
 const DATABASE_VERSION = 1;
 const LOCAL_STORAGE_PREFIX = 'beach-set-manager-shared-pending-fallback-v1:';
 
+export const PENDING_LOAD_TIMEOUT_MS = 3_000;
+export const PENDING_WRITE_TIMEOUT_MS = 2_500;
+export const PENDING_REMOVE_TIMEOUT_MS = 2_500;
+export const INDEXED_DB_OPERATION_TIMEOUT_MS = 2_500;
+
+export type PendingStoreOperation = 'load' | 'save' | 'remove' | 'indexeddb';
+
+export class DurabilityTimeoutError extends Error {
+  readonly code = 'DURABILITY_TIMEOUT';
+
+  constructor(
+    readonly operation: PendingStoreOperation,
+    readonly timeoutMs: number,
+  ) {
+    super(`Device recovery ${operation} exceeded ${timeoutMs}ms.`);
+    this.name = 'DurabilityTimeoutError';
+  }
+}
+
+export function withDurabilityDeadline<T>(
+  operation: Promise<T>,
+  timeoutMs: number,
+  operationName: PendingStoreOperation,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = globalThis.setTimeout(
+      () => reject(new DurabilityTimeoutError(operationName, timeoutMs)),
+      timeoutMs,
+    );
+    operation.then(
+      (value) => {
+        globalThis.clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        globalThis.clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 function recordKey(userId: string, locationId: string): string {
   return `${userId}:${locationId}`;
 }
 
 function requestResult<T>(request: IDBRequest<T>): Promise<T> {
-  return new Promise((resolve, reject) => {
+  return withDurabilityDeadline(new Promise((resolve, reject) => {
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error ?? new Error('IndexedDB request failed.'));
-  });
+  }), INDEXED_DB_OPERATION_TIMEOUT_MS, 'indexeddb');
 }
 
 function transactionComplete(transaction: IDBTransaction): Promise<void> {
-  return new Promise((resolve, reject) => {
+  return withDurabilityDeadline(new Promise((resolve, reject) => {
     transaction.oncomplete = () => resolve();
     transaction.onabort = () => reject(transaction.error ?? new Error('IndexedDB transaction aborted.'));
     transaction.onerror = () => reject(transaction.error ?? new Error('IndexedDB transaction failed.'));
-  });
+  }), INDEXED_DB_OPERATION_TIMEOUT_MS, 'indexeddb');
 }
 
 class IndexedDbPendingSharedStateStore<T> implements PendingSharedStateStore<T> {
@@ -122,13 +164,22 @@ class IndexedDbPendingSharedStateStore<T> implements PendingSharedStateStore<T> 
 
   private openDatabase(): Promise<IDBDatabase> {
     if (!this.databasePromise) {
-      this.databasePromise = new Promise((resolve, reject) => {
+      const opening = new Promise<IDBDatabase>((resolve, reject) => {
         if (!globalThis.indexedDB) {
           reject(new Error('IndexedDB is unavailable.'));
           return;
         }
 
         const request = globalThis.indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
+        let settled = false;
+        const timer = globalThis.setTimeout(() => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          this.databasePromise = null;
+          reject(new DurabilityTimeoutError('indexeddb', INDEXED_DB_OPERATION_TIMEOUT_MS));
+        }, INDEXED_DB_OPERATION_TIMEOUT_MS);
         request.onupgradeneeded = () => {
           const database = request.result;
           if (!database.objectStoreNames.contains(STORE_NAME)) {
@@ -137,6 +188,12 @@ class IndexedDbPendingSharedStateStore<T> implements PendingSharedStateStore<T> 
         };
         request.onsuccess = () => {
           const database = request.result;
+          if (settled) {
+            database.close();
+            return;
+          }
+          settled = true;
+          globalThis.clearTimeout(timer);
           this.database = database;
           database.onclose = () => this.releaseDatabase(database);
           database.onversionchange = () => {
@@ -146,14 +203,25 @@ class IndexedDbPendingSharedStateStore<T> implements PendingSharedStateStore<T> 
           resolve(database);
         };
         request.onerror = () => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          globalThis.clearTimeout(timer);
           this.databasePromise = null;
           reject(request.error ?? new Error('IndexedDB could not be opened.'));
         };
         request.onblocked = () => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          globalThis.clearTimeout(timer);
           this.databasePromise = null;
           reject(new Error('IndexedDB upgrade was blocked.'));
         };
       });
+      this.databasePromise = opening;
     }
 
     return this.databasePromise;
@@ -214,6 +282,22 @@ class LocalStoragePendingSharedStateStore<T> implements PendingSharedStateStore<
   }
 }
 
+class HangingSaveTestPendingSharedStateStore<T> implements PendingSharedStateStore<T> {
+  constructor(private readonly delegate: PendingSharedStateStore<T>) {}
+
+  load(userId: string, locationId: string): Promise<PendingSharedStateRecord<T> | null> {
+    return this.delegate.load(userId, locationId);
+  }
+
+  save(_record: PendingSharedStateRecord<T>): Promise<void> {
+    return new Promise<void>(() => undefined);
+  }
+
+  remove(userId: string, locationId: string): Promise<void> {
+    return this.delegate.remove(userId, locationId);
+  }
+}
+
 class MirroredPendingSharedStateStore<T> implements PendingSharedStateStore<T> {
   private primaryQueue: Promise<void> = Promise.resolve();
 
@@ -223,9 +307,17 @@ class MirroredPendingSharedStateStore<T> implements PendingSharedStateStore<T> {
   ) {}
 
   async load(userId: string, locationId: string): Promise<PendingSharedStateRecord<T> | null> {
-    const fallbackRecord = await this.fallback.load(userId, locationId).catch(() => null);
+    const fallbackRecord = await withDurabilityDeadline(
+      this.fallback.load(userId, locationId),
+      PENDING_LOAD_TIMEOUT_MS,
+      'load',
+    ).catch(() => null);
     const primaryLoad = this.primaryQueue
-      .then(() => this.primary.load(userId, locationId))
+      .then(() => withDurabilityDeadline(
+        this.primary.load(userId, locationId),
+        PENDING_LOAD_TIMEOUT_MS,
+        'load',
+      ))
       .catch(() => null);
     const primaryRecord = await Promise.race([
       primaryLoad,
@@ -246,13 +338,21 @@ class MirroredPendingSharedStateStore<T> implements PendingSharedStateStore<T> {
   async save(record: PendingSharedStateRecord<T>): Promise<void> {
     let fallbackSaved = false;
     try {
-      await this.fallback.save(record);
+      await withDurabilityDeadline(
+        this.fallback.save(record),
+        PENDING_WRITE_TIMEOUT_MS,
+        'save',
+      );
       fallbackSaved = true;
     } catch {
       // IndexedDB remains an independent durable path below.
     }
 
-    const primarySave = this.enqueuePrimary(() => this.primary.save(record));
+    const primarySave = this.enqueuePrimary(() => withDurabilityDeadline(
+      this.primary.save(record),
+      PENDING_WRITE_TIMEOUT_MS,
+      'save',
+    ));
     if (fallbackSaved) {
       return;
     }
@@ -262,13 +362,21 @@ class MirroredPendingSharedStateStore<T> implements PendingSharedStateStore<T> {
   async remove(userId: string, locationId: string): Promise<void> {
     let fallbackRemoved = false;
     try {
-      await this.fallback.remove(userId, locationId);
+      await withDurabilityDeadline(
+        this.fallback.remove(userId, locationId),
+        PENDING_REMOVE_TIMEOUT_MS,
+        'remove',
+      );
       fallbackRemoved = true;
     } catch {
       // IndexedDB cleanup remains an independent path below.
     }
 
-    const primaryRemove = this.enqueuePrimary(() => this.primary.remove(userId, locationId));
+    const primaryRemove = this.enqueuePrimary(() => withDurabilityDeadline(
+      this.primary.remove(userId, locationId),
+      PENDING_REMOVE_TIMEOUT_MS,
+      'remove',
+    ));
     if (fallbackRemoved) {
       return;
     }
@@ -304,12 +412,22 @@ export function createMirroredPendingSharedStateStore<T>(
 export function createBrowserPendingSharedStateStore<T>(): PendingSharedStateStore<T> {
   const indexedDb = createIndexedDbPendingSharedStateStore<T>();
   const localStorage = getBrowserLocalStorage();
-  return localStorage
+  const store = localStorage
     ? createMirroredPendingSharedStateStore(
         indexedDb,
         new LocalStoragePendingSharedStateStore<T>(localStorage),
       )
     : indexedDb;
+
+  // Preview-only manual fault injection. The flag must be present at build time,
+  // so this path is unavailable in the normal Production build and has no UI.
+  const testSeamEnabled = import.meta.env.VITE_ENABLE_DURABILITY_TEST_SEAM === 'true';
+  const requestedFailure = testSeamEnabled
+    ? new URLSearchParams(globalThis.location?.search ?? '').get('r2DurabilityFailure')
+    : null;
+  return requestedFailure === 'hang'
+    ? new HangingSaveTestPendingSharedStateStore(store)
+    : store;
 }
 
 export function createInMemoryPendingSharedStateStore<T>(): PendingSharedStateStore<T> {

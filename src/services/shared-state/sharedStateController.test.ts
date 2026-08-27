@@ -11,6 +11,10 @@ import type {
   PendingSharedStateStore,
 } from './pendingSharedStateStore';
 import {
+  createInMemoryPendingSharedStateStore,
+  createMirroredPendingSharedStateStore,
+} from './pendingSharedStateStore';
+import {
   SharedStateController,
   type SharedStateControllerOptions,
 } from './sharedStateController';
@@ -283,8 +287,17 @@ describe('SharedStateController', () => {
 
     controller.update({ marker: 'first', value: 2 });
     await flushPromises();
-    controller.update({ marker: 'superseded', value: 3 });
-    controller.update({ marker: 'latest', value: 4 });
+    expect(controller.update({ marker: 'superseded', value: 3 })).toMatchObject({
+      status: 'accepted',
+    });
+    expect(controller.update({ marker: 'latest', value: 4 })).toEqual({
+      status: 'rejected',
+      reason: 'safety_securing',
+    });
+    await flushPromises();
+    expect(controller.update({ marker: 'latest', value: 4 })).toMatchObject({
+      status: 'accepted',
+    });
 
     expect(repository.save).toHaveBeenCalledTimes(1);
     firstSave.resolve({
@@ -1116,5 +1129,179 @@ describe('SharedStateController', () => {
     await flushPromises();
 
     expect(repository.save).toHaveBeenCalledTimes(1);
+  });
+
+  it('continues to Supabase when localStorage-equivalent fallback succeeds and IndexedDB hangs', async () => {
+    const primary: PendingSharedStateStore<TestData> = {
+      load: async () => null,
+      save: () => new Promise<void>(() => undefined),
+      remove: () => new Promise<void>(() => undefined),
+    };
+    const fallback = createInMemoryPendingSharedStateStore<TestData>();
+    const pendingStore = createMirroredPendingSharedStateStore(primary, fallback);
+    const { controller, repository } = createController(new FakeRepository(), { pendingStore });
+
+    await controller.reload();
+    expect(controller.update({ marker: 'fallback-safe', value: 2 })).toMatchObject({
+      status: 'accepted',
+    });
+    await flushPromises();
+
+    expect(repository.save).toHaveBeenCalledWith(
+      LOCATION_ID,
+      4,
+      { marker: 'fallback-safe', value: 2 },
+    );
+    expect(controller.getSnapshot()).toMatchObject({
+      status: 'ready',
+      revision: 5,
+      syncStatus: 'saved',
+      deviceSafety: 'safe',
+    });
+  });
+
+  it('times out unsafe durability, blocks operations two through twenty, and keeps mutation one visible', async () => {
+    vi.useFakeTimers();
+    try {
+      const hangingPrimary: PendingSharedStateStore<TestData> = {
+        load: async () => null,
+        save: () => new Promise<void>(() => undefined),
+        remove: async () => undefined,
+      };
+      const failedFallback: PendingSharedStateStore<TestData> = {
+        load: async () => { throw new DOMException('Storage denied.', 'SecurityError'); },
+        save: async () => { throw new DOMException('Quota exceeded.', 'QuotaExceededError'); },
+        remove: async () => { throw new DOMException('Storage denied.', 'SecurityError'); },
+      };
+      const pendingStore = createMirroredPendingSharedStateStore(
+        hangingPrimary,
+        failedFallback,
+      );
+      const { controller, repository } = createController(new FakeRepository(), { pendingStore });
+      await controller.reload();
+
+      expect(controller.update({ marker: 'first-unsecured', value: 2 })).toEqual({
+        status: 'accepted',
+        kind: 'queued',
+      });
+      expect(controller.getSnapshot()).toMatchObject({
+        status: 'ready',
+        deviceSafety: 'securing',
+      });
+
+      await vi.advanceTimersByTimeAsync(2_501);
+      await flushPromises();
+
+      expect(controller.getSnapshot()).toMatchObject({
+        status: 'ready',
+        data: { marker: 'first-unsecured', value: 2 },
+        syncStatus: 'pending',
+        deviceSafety: 'blocked',
+      });
+      for (let operation = 2; operation <= 20; operation += 1) {
+        expect(controller.update({ marker: `rejected-${operation}`, value: operation })).toEqual({
+          status: 'rejected',
+          reason: 'safety_blocked',
+        });
+      }
+      expect(controller.getSnapshot()).toMatchObject({
+        data: { marker: 'first-unsecured', value: 2 },
+      });
+      expect(repository.save).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not let telemetry failure affect an otherwise healthy save', async () => {
+    const { controller, repository } = createController(new FakeRepository(), {
+      telemetry: {
+        bootSessionId: '00000000-0000-4000-8000-000000000000',
+        record: () => { throw new Error('telemetry offline'); },
+      },
+    });
+    await controller.reload();
+
+    expect(controller.update({ marker: 'telemetry-independent', value: 2 }, 1)).toMatchObject({
+      status: 'accepted',
+    });
+    await flushPromises();
+
+    expect(repository.save).toHaveBeenCalledTimes(1);
+    expect(controller.getSnapshot()).toMatchObject({
+      status: 'ready',
+      revision: 5,
+      deviceSafety: 'safe',
+    });
+  });
+
+  it('does not clear a hard stop when a later queued durability write finishes', async () => {
+    vi.useFakeTimers();
+    try {
+      let saveCall = 0;
+      const pendingStore: PendingSharedStateStore<TestData> = {
+        load: async () => null,
+        save: async () => {
+          saveCall += 1;
+          if (saveCall === 2) {
+            await new Promise<void>(() => undefined);
+          }
+        },
+        remove: async () => undefined,
+      };
+      const { controller, repository } = createController(new FakeRepository(), { pendingStore });
+      await controller.reload();
+
+      controller.update({ marker: 'first-durable', value: 2 });
+      await flushPromises();
+      expect(controller.getSnapshot()).toMatchObject({ deviceSafety: 'durable' });
+      expect(repository.save).not.toHaveBeenCalled();
+
+      expect(controller.update({ marker: 'second-visible', value: 3 })).toMatchObject({
+        status: 'accepted',
+      });
+      await vi.advanceTimersByTimeAsync(2_501);
+      await flushPromises();
+
+      expect(saveCall).toBeGreaterThanOrEqual(3);
+      expect(controller.getSnapshot()).toMatchObject({
+        status: 'ready',
+        data: { marker: 'second-visible', value: 3 },
+        deviceSafety: 'blocked',
+      });
+      expect(controller.update({ marker: 'must-stay-rejected', value: 4 })).toEqual({
+        status: 'rejected',
+        reason: 'safety_blocked',
+      });
+      expect(repository.save).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('remains usable through repeated Home Screen PWA-style resume signals', async () => {
+    const { controller, repository } = createController();
+    controller.activate();
+    await controller.reload();
+
+    for (let cycle = 0; cycle < 10; cycle += 1) {
+      controller.resume();
+    }
+    await flushPromises();
+
+    expect(controller.update({ marker: 'after-resume-cycles', value: 2 })).toMatchObject({
+      status: 'accepted',
+    });
+    await flushPromises();
+    expect(repository.save).toHaveBeenCalledWith(
+      LOCATION_ID,
+      4,
+      { marker: 'after-resume-cycles', value: 2 },
+    );
+    expect(controller.getSnapshot()).toMatchObject({
+      status: 'ready',
+      revision: 5,
+      deviceSafety: 'safe',
+    });
   });
 });

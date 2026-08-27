@@ -5,6 +5,8 @@ import {
   createMirroredPendingSharedStateStore,
   type PendingSharedStateRecord,
   type PendingSharedStateStore,
+  DurabilityTimeoutError,
+  INDEXED_DB_OPERATION_TIMEOUT_MS,
 } from './pendingSharedStateStore';
 
 type TestData = { value: number };
@@ -126,6 +128,133 @@ describe('IndexedDB pending shared-state storage', () => {
       expect(staleDatabase.close).toHaveBeenCalledTimes(1);
       expect(put).toHaveBeenCalledTimes(1);
     } finally {
+      if (previousIndexedDb) {
+        Object.defineProperty(globalThis, 'indexedDB', { configurable: true, value: previousIndexedDb });
+      } else {
+        Reflect.deleteProperty(globalThis, 'indexedDB');
+      }
+    }
+  });
+
+  it('rejects when IndexedDB open fails', async () => {
+    const open = vi.fn(() => {
+      const request = {
+        result: null as unknown as IDBDatabase,
+        error: new Error('open failed'),
+        onupgradeneeded: null as (() => void) | null,
+        onsuccess: null as (() => void) | null,
+        onerror: null as (() => void) | null,
+        onblocked: null as (() => void) | null,
+      };
+      queueMicrotask(() => request.onerror?.());
+      return request;
+    });
+    const previousIndexedDb = globalThis.indexedDB;
+    Object.defineProperty(globalThis, 'indexedDB', { configurable: true, value: { open } });
+
+    try {
+      const store = createIndexedDbPendingSharedStateStore<TestData>();
+      await expect(store.save(record)).rejects.toThrow('open failed');
+    } finally {
+      if (previousIndexedDb) {
+        Object.defineProperty(globalThis, 'indexedDB', { configurable: true, value: previousIndexedDb });
+      } else {
+        Reflect.deleteProperty(globalThis, 'indexedDB');
+      }
+    }
+  });
+
+  it('rejects and invalidates the connection when a transaction aborts', async () => {
+    const transaction = {
+      db: null as unknown as IDBDatabase,
+      objectStore: () => ({ put: vi.fn() }),
+      oncomplete: null as (() => void) | null,
+      onabort: null as (() => void) | null,
+      onerror: null,
+      error: new Error('transaction rejected'),
+    };
+    const database = {
+      objectStoreNames: { contains: () => true },
+      transaction: vi.fn(() => {
+        globalThis.setTimeout(() => transaction.onabort?.(), 0);
+        return transaction;
+      }),
+      close: vi.fn(),
+      onclose: null,
+      onversionchange: null,
+    } as unknown as IDBDatabase;
+    transaction.db = database;
+    const open = vi.fn(() => {
+      const request = {
+        result: database,
+        error: null,
+        onupgradeneeded: null as (() => void) | null,
+        onsuccess: null as (() => void) | null,
+        onerror: null,
+        onblocked: null,
+      };
+      queueMicrotask(() => request.onsuccess?.());
+      return request;
+    });
+    const previousIndexedDb = globalThis.indexedDB;
+    Object.defineProperty(globalThis, 'indexedDB', { configurable: true, value: { open } });
+
+    try {
+      const store = createIndexedDbPendingSharedStateStore<TestData>();
+      await expect(store.save(record)).rejects.toThrow('transaction rejected');
+      expect(database.close).toHaveBeenCalledTimes(1);
+    } finally {
+      if (previousIndexedDb) {
+        Object.defineProperty(globalThis, 'indexedDB', { configurable: true, value: previousIndexedDb });
+      } else {
+        Reflect.deleteProperty(globalThis, 'indexedDB');
+      }
+    }
+  });
+
+  it('times out a transaction that never completes instead of hanging forever', async () => {
+    vi.useFakeTimers();
+    const transaction = {
+      db: null as unknown as IDBDatabase,
+      objectStore: () => ({ put: vi.fn() }),
+      oncomplete: null,
+      onabort: null,
+      onerror: null,
+      error: null,
+    };
+    const database = {
+      objectStoreNames: { contains: () => true },
+      transaction: vi.fn(() => transaction),
+      close: vi.fn(),
+      onclose: null,
+      onversionchange: null,
+    } as unknown as IDBDatabase;
+    transaction.db = database;
+    const open = vi.fn(() => {
+      const request = {
+        result: database,
+        error: null,
+        onupgradeneeded: null as (() => void) | null,
+        onsuccess: null as (() => void) | null,
+        onerror: null,
+        onblocked: null,
+      };
+      queueMicrotask(() => request.onsuccess?.());
+      return request;
+    });
+    const previousIndexedDb = globalThis.indexedDB;
+    Object.defineProperty(globalThis, 'indexedDB', { configurable: true, value: { open } });
+
+    try {
+      const store = createIndexedDbPendingSharedStateStore<TestData>();
+      const saving = store.save(record);
+      const rejection = expect(saving).rejects.toBeInstanceOf(DurabilityTimeoutError);
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(INDEXED_DB_OPERATION_TIMEOUT_MS + 1);
+      await rejection;
+      expect(database.close).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
       if (previousIndexedDb) {
         Object.defineProperty(globalThis, 'indexedDB', { configurable: true, value: previousIndexedDb });
       } else {

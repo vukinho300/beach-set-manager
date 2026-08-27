@@ -18,8 +18,9 @@ export type PreservedFinancialActivity = {
 export type PreservedAppDataRecoveryFile = {
   app: 'Beach Set Manager';
   kind: 'preserved-unsaved-app-data';
-  version: 1;
+  version: 2;
   exportedAt: string;
+  userId: string;
   locationId: string;
   serverRevision: number | null;
   preservedData: AppData;
@@ -110,6 +111,7 @@ export function findPreservedFinancialActivity(
 
 export function createPreservedAppDataRecoveryFile(
   preservedData: AppData,
+  userId: string,
   locationId: string,
   serverRevision: number | null,
   exportedAt = new Date().toISOString(),
@@ -117,8 +119,9 @@ export function createPreservedAppDataRecoveryFile(
   return {
     app: 'Beach Set Manager',
     kind: 'preserved-unsaved-app-data',
-    version: 1,
+    version: 2,
     exportedAt,
+    userId,
     locationId,
     serverRevision,
     preservedData,

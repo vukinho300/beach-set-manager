@@ -11,12 +11,17 @@ import {
   SharedStateController,
   type NormalizeSharedState,
   type SharedStateControllerState,
+  type SharedUpdateAdmission,
 } from './sharedStateController';
 import { createSupabaseSharedLocationStateRepository } from './supabaseRepository';
+import { createClientSyncTelemetry } from './syncTelemetry';
 
 export type SharedAppDataSession = {
   state: SharedStateControllerState<AppData>;
-  update(nextState: AppData): void;
+  noteVisibleMutation(): number;
+  update(nextState: AppData, mutationSequence?: number): SharedUpdateAdmission;
+  recordLocalSafetyBlock(mutationSequence?: number): void;
+  retrySecuringChange(): SharedUpdateAdmission;
   reload(): Promise<void>;
 };
 
@@ -24,6 +29,26 @@ export type UserScopedSharedState<T> = {
   userId: string | null;
   state: SharedStateControllerState<T>;
 };
+
+export type SharedControllerBinding<T> = {
+  userId: string;
+  controller: Pick<SharedStateController<T>, 'update'>;
+};
+
+export function admitSharedUpdateForBinding<T>(
+  authenticatedUserId: string | null,
+  binding: SharedControllerBinding<T> | null,
+  nextState: T,
+  mutationSequence?: number,
+): SharedUpdateAdmission {
+  if (!binding) {
+    return { status: 'rejected', reason: 'controller_unavailable' };
+  }
+  if (binding.userId !== authenticatedUserId) {
+    return { status: 'rejected', reason: 'identity_mismatch' };
+  }
+  return binding.controller.update(nextState, mutationSequence);
+}
 
 const LOADING_SHARED_STATE = { status: 'loading' } as const;
 
@@ -46,6 +71,7 @@ export function useSharedAppData(
     repository: repository ?? createSupabaseSharedLocationStateRepository<AppData>(),
     pendingStore: pendingStore ?? createBrowserPendingSharedStateStore<AppData>(),
     normalize,
+    telemetry: createClientSyncTelemetry(PETALON_LOCATION_ID),
   }));
   const controllerRef = useRef<{
     userId: string;
@@ -57,6 +83,7 @@ export function useSharedAppData(
       state: LOADING_SHARED_STATE,
     },
   );
+  const mutationSequenceRef = useRef(0);
 
   useEffect(() => {
     if (!authenticatedUserId) {
@@ -73,6 +100,7 @@ export function useSharedAppData(
         userId: authenticatedUserId,
         pendingStore: configuration.pendingStore,
         reconcilePendingState: reconcileCompatibleBeachSetPendingState,
+        telemetry: configuration.telemetry,
       },
     );
     const binding = { userId: authenticatedUserId, controller };
@@ -83,11 +111,13 @@ export function useSharedAppData(
       }
     });
     controller.activate();
+    configuration.telemetry.record({ eventCode: 'APP_BOOT' });
     void controller.reload();
 
     const handleResume = () => controller.resume();
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
+        configuration.telemetry.record({ eventCode: 'VISIBILITY_RESUME' });
         controller.resume();
       }
     };
@@ -108,14 +138,67 @@ export function useSharedAppData(
   }, [authenticatedUserId, configuration]);
 
   const update = useCallback(
-    (nextState: AppData) => {
+    (nextState: AppData, suppliedMutationSequence?: number): SharedUpdateAdmission => {
       const binding = controllerRef.current;
-      if (binding?.userId === authenticatedUserId) {
-        binding.controller.update(nextState);
+      const mutationSequence = suppliedMutationSequence ?? ++mutationSequenceRef.current;
+      configuration.telemetry.record({ eventCode: 'BRIDGE_FORWARDED', mutationSequence });
+      if (!binding) {
+        configuration.telemetry.record({
+          eventCode: 'CONTROLLER_REJECTED',
+          mutationSequence,
+          errorCategory: 'controller_unavailable',
+        });
+        return admitSharedUpdateForBinding(
+          authenticatedUserId,
+          binding,
+          nextState,
+          mutationSequence,
+        );
       }
+      if (binding.userId !== authenticatedUserId) {
+        configuration.telemetry.record({
+          eventCode: 'CONTROLLER_REJECTED',
+          mutationSequence,
+          errorCategory: 'identity_mismatch',
+        });
+        return admitSharedUpdateForBinding(
+          authenticatedUserId,
+          binding,
+          nextState,
+          mutationSequence,
+        );
+      }
+      return admitSharedUpdateForBinding(
+        authenticatedUserId,
+        binding,
+        nextState,
+        mutationSequence,
+      );
     },
-    [authenticatedUserId],
+    [authenticatedUserId, configuration],
   );
+  const noteVisibleMutation = useCallback(() => {
+    const mutationSequence = ++mutationSequenceRef.current;
+    configuration.telemetry.record({ eventCode: 'MUTATION_VISIBLE', mutationSequence });
+    return mutationSequence;
+  }, [configuration]);
+  const recordLocalSafetyBlock = useCallback((mutationSequence?: number) => {
+    configuration.telemetry.record({
+      eventCode: 'CONTROLLER_BLOCKED',
+      mutationSequence,
+      errorCategory: 'admission_timeout',
+    });
+  }, [configuration]);
+  const retrySecuringChange = useCallback((): SharedUpdateAdmission => {
+    const binding = controllerRef.current;
+    if (!binding) {
+      return { status: 'rejected', reason: 'controller_unavailable' };
+    }
+    if (binding.userId !== authenticatedUserId) {
+      return { status: 'rejected', reason: 'identity_mismatch' };
+    }
+    return binding.controller.retrySecuringChange();
+  }, [authenticatedUserId]);
   const reload = useCallback(() => {
     const binding = controllerRef.current;
     return binding?.userId === authenticatedUserId
@@ -128,5 +211,12 @@ export function useSharedAppData(
     scopedState,
   );
 
-  return { state, update, reload };
+  return {
+    state,
+    noteVisibleMutation,
+    update,
+    recordLocalSafetyBlock,
+    retrySecuringChange,
+    reload,
+  };
 }
