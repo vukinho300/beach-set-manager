@@ -3,22 +3,22 @@ import type { SharedDeviceSafety, SharedSyncStatus } from './sharedStateControll
 export const OPERATIONAL_ADMISSION_WINDOW_MS = 750;
 
 export function shouldLockOperationalMutations(
-  localMatchesController: boolean,
+  visibleStateTrackedByController: boolean,
   deviceSafety: SharedDeviceSafety,
   locallyBlocked: boolean,
 ): boolean {
   return locallyBlocked
-    || !localMatchesController
+    || !visibleStateTrackedByController
     || deviceSafety === 'securing'
     || deviceSafety === 'blocked';
 }
 
 export function shouldArmAdmissionWatchdog(
-  localMatchesController: boolean,
+  visibleStateTrackedByController: boolean,
   syncStatus: SharedSyncStatus,
   deviceSafety: SharedDeviceSafety,
 ): boolean {
-  return !localMatchesController
+  return !visibleStateTrackedByController
     && syncStatus === 'saved'
     && deviceSafety === 'safe';
 }

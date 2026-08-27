@@ -61,6 +61,7 @@ import {
 import {
   consumeOperationalSnapshot,
   createOperationalAppDataBridge,
+  isIncomingAuthoritativeSnapshot,
   stageAuthoritativeSnapshot,
 } from './services/shared-state/operationalAppDataBridge';
 import { useSharedAppData } from './services/shared-state/useSharedAppData';
@@ -1392,25 +1393,36 @@ function OperationalApp({
     lastAutomaticResetDate,
   ]);
   const localMatchesController = areSharedStatesEqual(currentLocalAppData, sharedAppData);
+  const receivingAuthoritativeSnapshot = isIncomingAuthoritativeSnapshot(
+    appDataBridgeRef.current,
+    currentLocalAppData,
+    sharedAppData,
+    areSharedStatesEqual,
+  );
+  const visibleStateTrackedByController = localMatchesController
+    || receivingAuthoritativeSnapshot;
+  const hasUnadmittedLocalDivergence = !visibleStateTrackedByController;
   const operationalMutationsLocked = shouldLockOperationalMutations(
-    localMatchesController,
+    visibleStateTrackedByController,
     sharedDeviceSafety,
     localSafetyStop !== null,
   );
   const hardSafetyStop = localSafetyStop !== null || sharedDeviceSafety === 'blocked';
   const displayedDeviceSafety: SharedDeviceSafety = hardSafetyStop
     ? 'blocked'
-    : localMatchesController
-      ? sharedDeviceSafety
-      : 'securing';
-  const displayedSyncStatus: SharedSyncStatus = localMatchesController
-    ? sharedSyncStatus
-    : 'saving';
+    : hasUnadmittedLocalDivergence
+      ? 'securing'
+      : sharedDeviceSafety;
+  const displayedSyncStatus: SharedSyncStatus = hasUnadmittedLocalDivergence
+    ? 'saving'
+    : sharedSyncStatus;
   const displayedSyncMessage = hardSafetyStop
     ? 'STOP — THIS CHANGE IS NOT SECURED'
-    : !localMatchesController
+    : hasUnadmittedLocalDivergence
       ? 'Securing this visible change...'
-      : sharedSyncMessage ?? (
+      : receivingAuthoritativeSnapshot
+        ? 'Refreshing shared data...'
+        : sharedSyncMessage ?? (
           sharedDeviceSafety === 'securing'
             ? 'Securing this change on your device...'
             : sharedDeviceSafety === 'durable' && sharedSyncStatus !== 'saved'
@@ -1517,11 +1529,14 @@ function OperationalApp({
       visibleMutationSequenceRef.current = undefined;
       return;
     }
+    if (receivingAuthoritativeSnapshot) {
+      return;
+    }
     if (appDataBridgeRef.current.pendingAuthoritativeSnapshot !== null) {
       return;
     }
     visibleMutationSequenceRef.current ??= onMutationVisible();
-  }, [localMatchesController, onMutationVisible]);
+  }, [localMatchesController, onMutationVisible, receivingAuthoritativeSnapshot]);
 
   useEffect(() => {
     if (!consumeOperationalSnapshot(
@@ -1546,7 +1561,7 @@ function OperationalApp({
 
   useEffect(() => {
     if (!shouldArmAdmissionWatchdog(
-      localMatchesController,
+      visibleStateTrackedByController,
       sharedSyncStatus,
       sharedDeviceSafety,
     )) {
@@ -1562,10 +1577,10 @@ function OperationalApp({
     });
   }, [
     currentLocalAppData,
-    localMatchesController,
     onLocalSafetyBlock,
     sharedDeviceSafety,
     sharedSyncStatus,
+    visibleStateTrackedByController,
   ]);
 
   useEffect(() => {
