@@ -4,7 +4,7 @@ import { PETALON_LOCATION_ID } from '../../domain/petalon';
 import type { SharedLocationStateRepository } from './repository';
 import { reconcileCompatibleBeachSetPendingState } from './appDataPendingRecovery';
 import {
-  createIndexedDbPendingSharedStateStore,
+  createBrowserPendingSharedStateStore,
   type PendingSharedStateStore,
 } from './pendingSharedStateStore';
 import {
@@ -44,7 +44,7 @@ export function useSharedAppData(
 ): SharedAppDataSession {
   const [configuration] = useState(() => ({
     repository: repository ?? createSupabaseSharedLocationStateRepository<AppData>(),
-    pendingStore: pendingStore ?? createIndexedDbPendingSharedStateStore<AppData>(),
+    pendingStore: pendingStore ?? createBrowserPendingSharedStateStore<AppData>(),
     normalize,
   }));
   const controllerRef = useRef<{
