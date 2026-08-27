@@ -1,5 +1,5 @@
 import {
-  createIndexedDbPendingSharedStateStore,
+  createBrowserPendingSharedStateStore,
   type PendingSharedStateStore,
 } from './pendingSharedStateStore';
 
@@ -43,7 +43,7 @@ export async function scanDeviceRecoverySnapshots<T>(
   userId: string,
   locationId: string,
   normalize: (value: unknown) => T | null,
-  pendingStore: PendingSharedStateStore<T> = createIndexedDbPendingSharedStateStore<T>(),
+  pendingStore: PendingSharedStateStore<T> = createBrowserPendingSharedStateStore<T>(),
 ): Promise<DeviceRecoverySnapshot<T>[]> {
   const snapshots: DeviceRecoverySnapshot<T>[] = [];
 
