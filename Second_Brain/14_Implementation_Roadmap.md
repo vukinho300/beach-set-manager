@@ -1,61 +1,64 @@
 # Implementation Roadmap
 
 Status: `prototype_decision`
+Last reviewed: 2026-08-27
 
-## Shared Petalon v1 — current track
+## Completed shared foundation
 
-1. ✅ **Step 1 completed** — minimal Supabase browser/client and shared-state repository foundation. Merged in PR #3.
-2. ✅ **Step 2 completed** — dedicated Beach Set Manager Supabase project, `locations`, `location_memberships`, versioned `location_state`, RLS/least privilege, generated types and revision-safe writes. Merged in PR #5.
-3. ✅ **Step 3 completed** — real Vuk/Vito/Mark Auth identities, memberships, stale-write proof, audit ownership, revocation/restoration and worker privilege denials. Merged in PR #6.
-4. ✅ **Step 4 completed** — typed Supabase shared-state adapter with mandatory `location_id + expectedRevision`, conflict/unavailable classification and tests. Merged in PR #8.
-5. ✅ **Step 5 completed** — browser Auth/session UX with persisted session, sign-out and no public signup. Merged in PR #10.
-6. ✅ **Step 6 completed** — authoritative Supabase AppData, server-first load, no operational localStorage fallback, serialized/coalesced revision-safe saves, conservative conflict/unavailable behavior and account-switch isolation. Merged in PR #12.
-7. ✅ **Step 7 completed** — filtered realtime invalidation, background authoritative reload model, revision suppression, save/pending/conflict safety and user-scoped subscription cleanup. Merged in PR #14.
-8. ✅ **Step 8 VERIFIED** — real Vuk/Vito/Mark verification of Auth/session, shared reads/writes, realtime convergence, stale conflict protection, anonymous denial, live revocation/restoration, worker privilege protection and final clean state.
-9. ✅ **Production Reliability R1 completed** — background convergence without remount/scroll reset; UI-only tab/scroll continuity; durable user/location-scoped IndexedDB recovery for unconfirmed AppData; bounded retry/resume; conservative attempted-save recovery and conflict handling. Merged in PR #17; Second Brain record merged in PR #18.
-10. **Step 9 — independently reviewed, PR #19 pending merge:** canonical three-role foundation: Vuk `PLATFORM_OWNER` / Platform Admin, Mark `LOCATION_ADMIN` / Location Owner, Vito `WORKER`; RLS-backed own-membership role loading; identity-scoped role state; Vuk+Mark location-management UI; Vito full normal operations without destructive shared tools; Mark live role drift corrected; verification expectations hardened. Includes fresh paid-set payment draft behavior so historical price no longer pre-fills the next payment intent.
-11. **Next product step — Mark Location Owner Dashboard:** define and implement a focused owner/manager dashboard on top of `LOCATION_ADMIN` without confusing owner-focused UI with confidential server-enforced data.
-12. Add trusted worker/location membership administration only after a safe server-side write path is designed; never ship service-role credentials to the browser.
-13. Migrate/refine individual domains into normalized tables only when the whole-AppData JSONB model becomes an actual limitation or when owner-only confidentiality/action-level authorization requires a separate boundary.
+1. ✅ Step 1 — Supabase browser/client and shared-state repository foundation. PR #3.
+2. ✅ Step 2 — Beach Set Manager Supabase project, locations/memberships/versioned `location_state`, RLS and revision-safe writes. PR #5.
+3. ✅ Step 3 — real Auth identities, memberships, stale-write/revocation/privilege verification. PR #6.
+4. ✅ Step 4 — typed shared-state adapter and conflict/unavailable classification. PR #8.
+5. ✅ Step 5 — browser Auth/session UX. PR #10.
+6. ✅ Step 6 — authoritative Supabase AppData, serialized/coalesced CAS writes and account isolation. PR #12.
+7. ✅ Step 7 — filtered Realtime invalidation and lifecycle-safe shared controller. PR #14.
+8. ✅ Step 8 — real Vuk/Vito/Mark shared-production verification.
+9. ✅ Production Reliability R1 — background convergence, UI continuity and durable user/location pending recovery. PR #17; Second Brain PR #18.
+10. ✅ Step 9 — three-role foundation: Vuk `PLATFORM_OWNER`, Mark `LOCATION_ADMIN`, Vito `WORKER`; role-aware product controls and fresh Set payment drafts. PR #19 plus Second Brain update.
 
-## Canonical role hierarchy
+## First Incident reliability track
 
-- `PLATFORM_OWNER` — Vuk — Platform Admin / software-platform authority and Petalon support access.
-- `LOCATION_ADMIN` — Mark — Location Owner / Petalon owner-manager experience.
-- `WORKER` — Vito — daily operational employee experience.
+11. **First Incident — 2026-08-27:** roughly twenty visible iPhone Home Screen PWA operations during a real round did not reach Supabase. Treat [[18_Production_Incidents_and_Never_Again_Rules]] as a permanent release reference.
+12. **Production Reliability R2 — Draft PR #25:** fail closed when device durability or controller admission is unsafe; bound persistence operations; explicit update admission; emergency recovery export; privacy-safe pipeline telemetry; distinguish incoming Realtime convergence from genuine local divergence.
+13. **R2 release checkpoint:** affected-iPhone Preview lifecycle test, concurrent-device test, 15–20 walking-style operations, controlled durability failure and recovery export. No Production merge/deploy before PASS.
+14. **Reliability R3 — preventative database architecture:** design/implement immutable client operation IDs/outbox, append-only server operation ledger, idempotent authenticated server commands and immutable/voidable financial ledger. Move concurrency gradually toward per-entity versions instead of one whole-location replacement revision.
 
-All three currently keep normal operations. Location-management/destructive shared UI is available to Platform Admin and Location Owner, not Worker.
+## Multi-location track
 
-This does not yet create semantic action-level database authorization inside the monolithic `location_state` JSONB update path.
+15. **Step 10 — Koversada / Multi-Location v1:** currently paused behind the First Incident reliability gate. Resume only without weakening Never-Again Rules.
+16. Koversada initial interface: Aquapark + Settings only; same app/link/Supabase project; own location state and RLS memberships.
+17. Koversada access: Worker A operates Koversada; Vuk and Mark can monitor/manage both Petalon and Koversada; Vito remains Petalon-only.
+18. Koversada must support multiple independent Worker Auth users next season. Two workers using one location simultaneously plus Vuk/Mark monitoring is a required architecture/test scenario.
+19. Add location switching/reporting for Vuk/Mark and location-specific UI profiles only after shared-state/reliability scoping is proven safe.
 
-## Reliability architecture required by evidence
+## Reliability invariants
 
-- Supabase remains authoritative.
-- Initial Auth/shared access load may block; background realtime/reconnect refresh must not blank/remount working UI.
-- Operational UI position is separate device UI state, not shared AppData.
-- Unconfirmed operational mutations must have a durable device copy before retryable network failure/reopen can erase them.
-- Current R1 uses a whole-AppData IndexedDB recovery snapshot, not a full immutable command outbox.
-- Attempted/ambiguous recovery must prefer preserved conflict over guessing or force overwrite.
-- Account/user scoping and RLS remain mandatory around every recovery path.
+- Supabase remains authoritative for server-confirmed state.
+- A visible mutation cannot be silently ignored by the shared controller.
+- No durability/persistence operation may block forever.
+- Unsafe local durability hard-stops further operational work.
+- Temporary server/network failure with confirmed local durability is different from unsafe device storage.
+- Incoming authoritative Realtime must not create a false STOP or false local mutation.
+- Accepted server facts must leave immutable forensic history.
+- Real Home Screen PWA lifecycle and concurrent phones are mandatory release-test conditions.
+- The whole-AppData JSONB model is an MVP bridge, not the final commercial transaction architecture.
 
-## Mark Location Owner Dashboard guardrails
+## Future owner/admin work
 
-Before implementation, decide which owner questions the dashboard answers.
+The Mark Location Owner Dashboard remains valid product work, but reliability and the real second-location architecture take priority. Owner-only confidential data must use an RLS-protected server boundary; hiding shared `location_state` data in React is not confidentiality.
 
-Owner-focused UX can summarize existing shared operational data, but if data must be truly confidential from Worker users it needs a separate RLS-protected server-side data boundary. Hiding shared `location_state` fields in React is not confidentiality.
+Worker/location membership administration requires a trusted server-side write path and must never use a service-role credential in the browser.
 
-Do not create a generic admin console unless actual workflow requires it.
+## Security/commercial hardening
 
-## Security hardening before broader production/commercial use
-
-- Enable Supabase Auth leaked-password protection unless a later documented constraint argues against it.
+- Enable Supabase Auth leaked-password protection unless a documented constraint prevents it.
 - Re-run security/performance advisors after material schema/Auth changes.
+- Evaluate database backup/PITR before commercial rollout for accepted server data.
+- Keep KNO separate and untouched.
+- Prepare neutral production ownership/branding/infrastructure before selling the product externally.
 
-## Later work
+## Later
 
-14. If R1's snapshot durability proves insufficient for long offline periods or frequent multi-user conflicts, implement a normalized immutable offline operation/outbox model with server-side idempotency and per-entity versions.
-15. Replace remaining device-owned business-day/reset behavior with server-owned `Europe/Zagreb` business-day logic when shared operation makes this necessary.
-16. Prepare separate production infrastructure, neutral branding/domain and stronger ownership separation before broader external/commercial rollout.
-17. When a second real location exists, design the provisioning/deployment pipeline and revisit multi-location architecture from evidence.
-18. Add seasonal licensing only if the business model requires it.
-19. Add payment/fiscal integrations later.
+20. Server-owned `Europe/Zagreb` business-day/reset logic where needed.
+21. Seasonal licensing if required by the business model.
+22. Payment/fiscal integrations later.

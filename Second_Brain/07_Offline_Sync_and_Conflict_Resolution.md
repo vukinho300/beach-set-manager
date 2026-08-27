@@ -1,111 +1,115 @@
 # Offline Sync and Conflict Resolution
 
 Status: `prototype_decision`
+Last reviewed: 2026-08-27
 
 ## Goal
 
-Workers must not silently lose a submitted Beach or Aquapark change during temporary mobile-network loss, app suspension or reopen. Supabase remains authoritative; local durability exists only to preserve unconfirmed work until it is either accepted or deliberately resolved.
+Workers must not silently lose a submitted Beach, Bed, Sunbed or Aquapark change during mobile-network loss, PWA suspension/reopen, browser-storage failure or concurrent multi-user operation. Supabase remains authoritative for server-confirmed facts.
 
-## Production evidence — 2026-08-26
+## Evidence progression
 
-Real phone use at Petalon proved the earlier fully-online assumption insufficient:
+### Production evidence — 2026-08-26
 
-- normal realtime refreshes visibly replaced the app with the shared-data loading screen and reset scroll/work position;
-- Vuk observed entries disappear after connection failures;
-- Vito independently reported Aquapark entries disappearing after refresh/unavailable events;
-- the operational consequence is severe because workers may no longer remember wristband/set numbers after physically moving on.
+Real phone use proved the earlier fully-online assumption insufficient:
 
-This evidence moved durable pending-write protection from deferred work into the current required production architecture.
+- normal Realtime refresh could disrupt worker position;
+- Vuk and Vito observed entries disappear around connection/unavailable behavior;
+- workers may no longer remember wristband/set numbers after physically moving on.
 
-## Production Reliability R1 — PR #17, independently reviewed pending merge
+This produced Production Reliability R1.
 
-R1 adds a deliberately narrow durability layer around the existing whole-AppData revision model.
+### First Incident — 2026-08-27
 
-### What R1 implements
+R1 was still insufficient. During a real round on Vuk's installed iPhone Home Screen PWA, roughly twenty visible operations never reached Supabase. Server evidence proves no accepted Vuk revision existed during the missing period. The exact client exception is unproven; the important failure class is a pre-network pipeline/durability failure while the UI remained usable.
 
-- Supabase remains the server-confirmed source of truth.
-- Retryable save failures keep the optimistic local state visible instead of immediately destroying the operational UI.
-- The latest unconfirmed AppData snapshot is persisted in IndexedDB before it can be treated as safely retryable.
-- Pending recovery records are scoped by authenticated `userId + locationId`.
-- Records preserve the server base revision/state, desired local state, timestamps and last attempted revision/state where applicable.
-- Retries use bounded backoff and also resume on browser `online`, focus and visibility/resume events.
-- Accepted server saves clear the pending record only after acceptance/recognition.
-- If the response was lost but the server already contains the exact attempted state, recovery recognizes that fact rather than duplicating the mutation.
-- If the server changed incompatibly, pending local work remains preserved and the controller enters a conservative conflict state.
-- A very narrow Beach-set rebase is allowed only for **unattempted** pending snapshots where non-set fields are unchanged and every locally changed set is either unchanged on the server or already equal to the desired value.
-- Any valid prior attempted-save metadata creates an ambiguity barrier unless the server explicitly proves that attempted state was accepted. This prevents stale recovery data from resurrecting a later legitimate Beach state.
-- Account switch/sign-out cannot expose or submit another user's pending work.
-- RLS revocation remains authoritative; IndexedDB is not an authorization bypass.
+This produced the permanent rules in [[18_Production_Incidents_and_Never_Again_Rules]] and the R2/R3 reliability track.
 
-### What R1 does NOT implement
+## R1 — merged baseline
 
-R1 is **not** the full future offline command/outbox architecture described below:
+R1 provides:
 
-- no immutable per-business-operation command log;
-- no server-side operation-id idempotency table;
-- no per-entity normalized versions;
-- no arbitrary multi-user offline auto-merge;
-- no service-worker Background Sync requirement;
-- no local operational database replacing Supabase.
+- background authoritative convergence without remount/scroll reset;
+- optimistic local state during retryable server/network failure;
+- user/location-scoped durable pending snapshot recovery;
+- bounded retry/backoff and resume on online/focus/visibility;
+- CAS/expected-revision protection;
+- conservative conflict behavior;
+- attempted-save ambiguity barrier;
+- narrow compatible Beach-set recovery only where proven safe;
+- account-switch isolation and RLS authority.
 
-It is a pragmatic durability buffer for the current JSONB/AppData model, introduced because real production usage proved silent loss was unacceptable.
+R1 does not make a device-only pending mutation server-confirmed.
 
-## UI continuity and background convergence
+## R2 — fail-closed containment, PR #25 pending release verification
 
-R1 also separates initial/blocking load from background authoritative refresh:
+R2 addresses the First Incident class without yet replacing the whole-AppData model:
 
-- cold startup still verifies Auth and authoritative shared access before editable use;
-- after a valid snapshot exists, realtime/reconnect refresh runs in the background and keeps the operational app mounted;
-- authoritative server snapshots are applied in place;
-- only an exact server snapshot echo is suppressed from the local-save path;
-- an interleaved worker mutation is always forwarded to the shared controller and pending durability path;
-- active tab and per-tab scroll position are stored separately under UI-only localStorage state;
-- UI continuity localStorage contains no operational AppData.
+- explicit mutation-admission results instead of silent controller returns;
+- bounded pending-store/IndexedDB operations;
+- separate `safe` / `securing` / `durable` / `blocked` device-safety state;
+- localStorage + IndexedDB recovery paths;
+- hard STOP if the current visible mutation cannot be durably secured;
+- further operational mutations blocked while unsafe;
+- emergency recovery export from the visible in-memory AppData;
+- privacy-safe client write-stage telemetry;
+- normal network failure can continue only when the local mutation is durably preserved;
+- incoming authoritative Realtime is explicitly distinguished from genuine local divergence so another worker's save does not create a false STOP.
+
+R2 is not Production-approved until the affected iPhone Home Screen PWA passes realistic lifecycle, concurrent-device, walking-style and controlled-failure Preview tests.
 
 ## Current conflict categories
 
 ### Safe accepted/ambiguous retry
-If the server proves it already contains the exact desired/attempted state, treat the operation as accepted and clear/recover safely without duplicate submission.
+
+If the server proves it already contains the exact attempted state, treat it as accepted rather than duplicating it.
 
 ### Narrow compatible Beach recovery
-Only for an **unattempted** pending AppData snapshot. Non-set fields must equal the base. Each changed set must be unchanged on the server or already identical to the desired set state. Anything else is a conflict.
+
+Only for an unattempted pending whole-AppData snapshot where the non-set state is unchanged and every locally changed set is either unchanged on the server or already equal to the desired value.
 
 ### Business/financial conflict
-Do not force overwrite. Preserve pending work and require deliberate recovery. Aquapark, reservations, sales, transactions and other non-set changes are not broadly auto-rebased.
 
-## Future full offline command architecture
+Do not force overwrite. Preserve pending work and require deliberate recovery. Aquapark, reservations, sales, transactions and other financial/business changes are not broadly auto-rebased.
 
-If sustained real-world use proves that workers must continue for long periods while fully offline or that whole-AppData conflict frequency becomes unacceptable, evolve beyond the R1 snapshot buffer.
+## R3 — planned operation/outbox architecture
 
-The future model should use IndexedDB with immutable operation records including at least:
+The First Incident plus planned multi-worker Koversada operation are evidence that the whole-AppData snapshot buffer should not remain the final commercial write architecture.
 
-- `operation_id` — UUID generated once on the client;
-- `installation_id` — persistent random device installation identifier;
-- `actor_user_id`;
-- `location_id`;
-- `entity_type` and `entity_id`;
-- `operation_type`;
-- `payload`;
-- `base_version`;
-- `created_at_client`;
-- `sync_status`.
+R3 should move business actions toward immutable commands:
 
-The server should store accepted `operation_id` values with a unique constraint so retrying the exact same operation returns the prior result rather than creating a duplicate.
+- one stable UUID `operation_id` per real action;
+- durable client outbox record retained across reopen/retry;
+- authenticated server command derives `auth.uid()` and validates active location membership;
+- unique server operation ID makes retry idempotent;
+- accepted operation stored in append-only audit history;
+- financial side effect inserted atomically and corrected through explicit void/reversal semantics;
+- per-entity/version concurrency where needed so independent resources do not contend on one whole-location revision.
 
-Per-entity optimistic versions should then protect exclusive occupancy/financial changes. Different offline intents against the same resource/version must conflict rather than use last-write-wins.
+Examples of future commands include set payment, bed payment, non-numbered sunbed sale, Aquapark entry/return and reservation actions.
+
+## Multi-user concurrency
+
+Concurrent devices are normal operation:
+
+- Petalon: Vuk/Vito/Mark may have the app open simultaneously.
+- Koversada: a Worker operates while Vuk/Mark monitor; next season multiple independent Koversada Worker accounts may operate simultaneously.
+
+A remote authoritative update must converge without false safety blocking. A real interleaved local mutation must still enter durability/admission protection and must not be swallowed.
 
 ## Background Sync
 
-Browser Background Sync may be used only as an enhancement because support is not universal. Current R1 correctly relies on normal app lifecycle recovery (`online`, focus, visibility/resume) and does not require service-worker mutation sync.
+Browser Background Sync may be an enhancement only. It is not a correctness dependency because support/lifecycle behavior is not universal. Normal app startup/resume must recover durable local operations itself.
 
-## Offline UX
+## Offline/safety UX
 
-Current/near-term UI states should clearly distinguish:
+The UI must clearly distinguish:
 
-- server-confirmed saved state;
-- saving;
-- pending / not saved yet but preserved on this device;
+- server-confirmed saved;
+- securing on device;
+- durably preserved on device and retrying server;
 - connection stale while confirmed state remains visible;
-- conflict requiring attention.
+- hard blocked because device durability is unsafe;
+- conflict requiring deliberate resolution.
 
-Never claim an IndexedDB-pending mutation is server-confirmed before Supabase accepts it.
+A small banner alone is not a sufficient safety mechanism when continuing work would risk silent loss.
