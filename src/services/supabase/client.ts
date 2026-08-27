@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from './database.types';
+import { createFreshFetch } from './freshFetch';
 
 let client: SupabaseClient<Database> | null | undefined;
 
@@ -28,6 +29,9 @@ export function getSupabaseClient(): SupabaseClient<Database> | null {
   }
 
   client = createClient<Database>(configuration.url, configuration.publishableKey, {
+    global: {
+      fetch: createFreshFetch(),
+    },
     auth: {
       autoRefreshToken: true,
       persistSession: true,

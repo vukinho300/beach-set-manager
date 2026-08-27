@@ -41,6 +41,7 @@ import {
   createFreshSetPaymentDraft,
   getSetPaymentDraftAmount,
 } from './domain/setPaymentDraft';
+import { PETALON_LOCATION_ID } from './domain/petalon';
 import type { AuthenticatedUser } from './services/auth/authService';
 import { useAuthSession } from './services/auth/useAuthSession';
 import {
@@ -61,6 +62,10 @@ import {
   stageAuthoritativeSnapshot,
 } from './services/shared-state/operationalAppDataBridge';
 import { useSharedAppData } from './services/shared-state/useSharedAppData';
+import {
+  createPreservedAppDataRecoveryFile,
+  findPreservedPaidSetPayments,
+} from './services/shared-state/preservedAppDataRecovery';
 import {
   clampScrollPosition,
   loadUiContinuity,
@@ -4212,6 +4217,89 @@ function BedIcon() {
   );
 }
 
+function PreservedChangesPanel({
+  preserved,
+  current,
+  serverRevision,
+}: {
+  preserved: AppData;
+  current: AppData | null;
+  serverRevision: number | null;
+}) {
+  const paidSetPayments = findPreservedPaidSetPayments(preserved, current);
+  const total = paidSetPayments.reduce((sum, payment) => sum + payment.amount, 0);
+
+  async function saveRecoveryFile() {
+    const exportedAt = new Date().toISOString();
+    const payload = createPreservedAppDataRecoveryFile(
+      preserved,
+      PETALON_LOCATION_ID,
+      serverRevision,
+      exportedAt,
+    );
+    const file = new File(
+      [JSON.stringify(payload, null, 2)],
+      `petalon-preserved-changes-${exportedAt.slice(0, 19).replace(/[:T]/g, '-')}.json`,
+      { type: 'application/json' },
+    );
+
+    if (navigator.canShare?.({ files: [file] })) {
+      try {
+        await navigator.share({
+          files: [file],
+          title: 'Petalon preserved changes',
+        });
+        return;
+      } catch {
+        // A cancelled/failed share can still use the download fallback below.
+      }
+    }
+
+    const url = URL.createObjectURL(file);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = file.name;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+  }
+
+  return (
+    <section className="preserved-changes" aria-labelledby="preserved-changes-heading">
+      <h2 id="preserved-changes-heading">Preserved on this device</h2>
+      {paidSetPayments.length ? (
+        <>
+          <p className="preserved-changes-summary">
+            {paidSetPayments.length} paid {paidSetPayments.length === 1 ? 'set' : 'sets'} not found in the current server snapshot ({formatEuro(total)}):
+          </p>
+          <ul>
+            {paidSetPayments.map((payment) => (
+              <li key={payment.transactionId}>
+                Set {payment.setId} — {formatEuro(payment.amount)}
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : (
+        <p>
+          The complete preserved device snapshot can be saved for inspection before retrying.
+        </p>
+      )}
+      <button
+        className="auth-submit auth-status-action"
+        type="button"
+        onClick={() => void saveRecoveryFile()}
+      >
+        Save preserved recovery file
+      </button>
+      <p className="preserved-changes-warning">
+        Save this file before clearing site data, signing out, or reinstalling the app.
+      </p>
+    </section>
+  );
+}
+
 function App() {
   const auth = useAuthSession();
   const authenticatedUserId =
@@ -4315,11 +4403,18 @@ function App() {
         message={`Another user saved Petalon first${currentRevision === undefined ? '' : ` at revision ${currentRevision}`}. This device's unsaved changes remain safely preserved and will not overwrite the server automatically.`}
         actionLabel="Check shared data again"
         onAction={() => void shared.reload()}
-      />
+      >
+        <PreservedChangesPanel
+          preserved={shared.state.local}
+          current={shared.state.current?.state ?? null}
+          serverRevision={currentRevision ?? null}
+        />
+      </AuthStatusPage>
     );
   }
 
   if (shared.state.status === 'unavailable') {
+    const preservedLocal = shared.state.phase === 'save' ? shared.state.local : undefined;
     return (
       <AuthStatusPage
         title="Shared Petalon data unavailable"
@@ -4328,7 +4423,15 @@ function App() {
           : `${shared.state.message} Local browser data was not used.`}
         actionLabel="Retry shared access"
         onAction={() => void shared.reload()}
-      />
+      >
+        {preservedLocal ? (
+          <PreservedChangesPanel
+            preserved={preservedLocal}
+            current={null}
+            serverRevision={null}
+          />
+        ) : null}
+      </AuthStatusPage>
     );
   }
 

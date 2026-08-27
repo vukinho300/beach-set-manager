@@ -1,5 +1,9 @@
-const CACHE_NAME = 'beach-set-manager-v1';
+const CACHE_NAME = 'beach-set-manager-v2';
 const APP_SHELL = ['/', '/manifest.webmanifest', '/icons/icon.svg', '/icons/maskable-icon.svg'];
+
+function isSameOriginGet(request) {
+  return request.method === 'GET' && new URL(request.url).origin === self.location.origin;
+}
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -17,12 +21,14 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  if (event.request.method !== 'GET') {
+  // Never intercept or cache Supabase/Auth/API traffic. A cached location_state
+  // response can look like a current authoritative row during a weak connection.
+  if (!isSameOriginGet(event.request)) {
     return;
   }
 
   event.respondWith(
-    fetch(event.request)
+    fetch(event.request, { cache: 'no-store' })
       .then((response) => {
         if (response && response.ok) {
           const copy = response.clone();
