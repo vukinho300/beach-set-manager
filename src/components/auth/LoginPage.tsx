@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useState, type FormEvent, type ReactNode } from 'react';
 
 export function LoginPage({
   error,
@@ -78,12 +78,14 @@ export function AuthStatusPage({
   loading = false,
   actionLabel,
   onAction,
+  children,
 }: {
   title: string;
   message: string;
   loading?: boolean;
   actionLabel?: string;
   onAction?: () => void;
+  children?: ReactNode;
 }) {
   return (
     <main className="auth-shell">
@@ -92,6 +94,7 @@ export function AuthStatusPage({
         <p className="eyebrow">Camp Petalon</p>
         <h1>{title}</h1>
         <p>{message}</p>
+        {children}
         {actionLabel && onAction ? (
           <button className="auth-submit auth-status-action" type="button" onClick={onAction}>
             {actionLabel}

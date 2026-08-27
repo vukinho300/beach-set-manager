@@ -4478,7 +4478,7 @@ button.existing-reservation-option {
 }
 
 .auth-card-header > p:last-child,
-.auth-status-card > p:last-child {
+.auth-status-card > p {
   margin: 2px 0 0;
   color: #53636f;
   line-height: 1.45;
@@ -4568,6 +4568,47 @@ button.existing-reservation-option {
 
 .auth-status-action {
   width: 100%;
+}
+
+.preserved-changes {
+  width: 100%;
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  text-align: left;
+  border: 1px solid #e0a83c;
+  border-radius: 12px;
+  background: #fff8e8;
+}
+
+.preserved-changes h2,
+.preserved-changes p,
+.preserved-changes ul {
+  margin: 0;
+}
+
+.preserved-changes h2 {
+  color: #6d4300;
+  font-size: 1.05rem;
+}
+
+.preserved-changes ul {
+  display: grid;
+  gap: 5px;
+  padding-left: 22px;
+  font-weight: 850;
+}
+
+.preserved-changes-summary {
+  color: #4b3a1f;
+  line-height: 1.45;
+}
+
+.preserved-changes-warning {
+  color: #734d0b;
+  font-size: 0.8rem;
+  font-weight: 750;
+  line-height: 1.4;
 }
 
 .auth-spinner {
