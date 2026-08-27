@@ -608,7 +608,7 @@ export class SharedStateController<T> {
         this.publishLocalReady(
           'pending',
           'stale',
-          'Not saved yet — device recovery storage is retrying.',
+          'STOP - changes are not secured or saved. Keep this page open and contact Vuk; device recovery storage is retrying.',
         );
         this.scheduleSaveRetry();
       }

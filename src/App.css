@@ -4682,12 +4682,20 @@ button.existing-reservation-option {
 }
 
 .shared-sync-pending {
-  color: #744b12;
-  background: rgba(255, 247, 226, 0.97);
-  border-bottom-color: rgba(195, 122, 24, 0.28);
+  min-height: 42px;
+  color: #ffffff;
+  font-size: 0.82rem;
+  font-weight: 850;
+  background: rgba(176, 24, 45, 0.98);
+  border-bottom-color: #7f1023;
+  box-shadow: 0 4px 16px rgba(127, 16, 35, 0.3);
 }
 
-.shared-sync-pending .shared-sync-dot,
+.shared-sync-pending .shared-sync-dot {
+  background: currentColor;
+  animation: shared-sync-pulse 0.9s ease-in-out infinite alternate;
+}
+
 .shared-refresh-stale .shared-sync-dot {
   background: #c37a18;
   animation: shared-sync-pulse 0.9s ease-in-out infinite alternate;
