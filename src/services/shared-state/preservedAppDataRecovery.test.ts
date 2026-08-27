@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createDefaultAppData } from '../../domain/appData';
 import {
   createPreservedAppDataRecoveryFile,
+  findPreservedFinancialActivity,
   findPreservedPaidSetPayments,
 } from './preservedAppDataRecovery';
 
@@ -49,6 +50,38 @@ describe('preserved AppData recovery', () => {
     };
 
     expect(findPreservedPaidSetPayments(current, current)).toEqual([]);
+  });
+
+  it('lists device-only activity across sets, beds, sunbeds, and Aquapark', () => {
+    const current = createDefaultAppData(new Date('2026-08-27T08:00:00Z'));
+    const preserved = structuredClone(current);
+    preserved.transactions.push(
+      { id: 'set', type: 'beach_set', amount: 12, createdAt: '2026-08-27T09:30:00Z', resourceLabel: 'Set 22' },
+      { id: 'bed', type: 'bed', amount: 20, createdAt: '2026-08-27T09:31:00Z', resourceLabel: 'Bed 3' },
+      { id: 'sunbed', type: 'sunbed', amount: 16, createdAt: '2026-08-27T09:32:00Z', resourceLabel: '2 sunbeds' },
+      { id: 'aquapark', type: 'aquapark', amount: 28, createdAt: '2026-08-27T09:33:00Z', resourceLabel: 'Wristbands 7, 8' },
+      { id: 'deleted', type: 'aquapark', amount: 14, createdAt: '2026-08-27T09:34:00Z', status: 'deleted' },
+    );
+
+    expect(findPreservedFinancialActivity(preserved, current)).toEqual([
+      { transactionId: 'set', type: 'beach_set', label: 'Set 22', amount: 12, createdAt: '2026-08-27T09:30:00Z' },
+      { transactionId: 'bed', type: 'bed', label: 'Bed 3', amount: 20, createdAt: '2026-08-27T09:31:00Z' },
+      { transactionId: 'sunbed', type: 'sunbed', label: '2 sunbeds', amount: 16, createdAt: '2026-08-27T09:32:00Z' },
+      { transactionId: 'aquapark', type: 'aquapark', label: 'Wristbands 7, 8', amount: 28, createdAt: '2026-08-27T09:33:00Z' },
+    ]);
+  });
+
+  it('does not report activity whose transaction already exists on the server', () => {
+    const current = createDefaultAppData(new Date('2026-08-27T08:00:00Z'));
+    current.transactions.push({
+      id: 'accepted-aquapark',
+      type: 'aquapark',
+      amount: 28,
+      createdAt: '2026-08-27T09:33:00Z',
+      resourceLabel: 'Wristbands 7, 8',
+    });
+
+    expect(findPreservedFinancialActivity(current, current)).toEqual([]);
   });
 
   it('creates a location- and revision-labelled recovery file', () => {

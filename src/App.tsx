@@ -63,8 +63,12 @@ import {
 } from './services/shared-state/operationalAppDataBridge';
 import { useSharedAppData } from './services/shared-state/useSharedAppData';
 import {
+  scanDeviceRecoverySnapshots,
+  type DeviceRecoverySnapshot,
+} from './services/shared-state/deviceRecoveryScanner';
+import {
   createPreservedAppDataRecoveryFile,
-  findPreservedPaidSetPayments,
+  findPreservedFinancialActivity,
 } from './services/shared-state/preservedAppDataRecovery';
 import {
   clampScrollPosition,
@@ -2307,6 +2311,18 @@ function OperationalApp({
           authActionError={authActionError}
           signOutPending={signOutPending}
           onSignOut={onSignOut}
+          currentAppData={{
+            sets,
+            extraBeds,
+            beachReservations,
+            savedSurnames,
+            sunbedSales,
+            aquaparkEntries,
+            transactions,
+            reportArchive,
+            lastAutomaticResetDate,
+          }}
+          sharedRevision={sharedRevision}
         />
       ) : (
         <>
@@ -3372,7 +3388,96 @@ function BeachShortcuts({ onSelect }: { onSelect: (section: BeachShortcut) => vo
   </nav>;
 }
 
-function SettingsPage({ view, backupMessage, importInputRef, savedSurnames, onDailyReset, onExport, onImport, onImportFile, onResetAppData, onDeleteSurname, onShowTransactions, onShowReport, onBackToSettings, transactions, reportArchive, onDeleteTransaction, membership, capabilities, authenticatedUser, authActionError, signOutPending, onSignOut }: {
+type DeviceRecoveryFinding = {
+  snapshot: DeviceRecoverySnapshot<AppData>;
+  activities: ReturnType<typeof findPreservedFinancialActivity>;
+};
+
+function DeviceRecoverySection({
+  authenticatedUserId,
+  current,
+  sharedRevision,
+}: {
+  authenticatedUserId: string;
+  current: AppData;
+  sharedRevision: number;
+}) {
+  const [checking, setChecking] = useState(false);
+  const [checked, setChecked] = useState(false);
+  const [findings, setFindings] = useState<DeviceRecoveryFinding[]>([]);
+  const uniqueActivities = useMemo(() => {
+    const byId = new Map<string, ReturnType<typeof findPreservedFinancialActivity>[number]>();
+    for (const finding of findings) {
+      for (const activity of finding.activities) {
+        byId.set(activity.transactionId, activity);
+      }
+    }
+    return [...byId.values()].sort((first, second) => first.createdAt.localeCompare(second.createdAt));
+  }, [findings]);
+  const total = uniqueActivities.reduce((sum, activity) => sum + activity.amount, 0);
+
+  async function checkDevice() {
+    setChecking(true);
+    try {
+      const snapshots = await scanDeviceRecoverySnapshots(
+        authenticatedUserId,
+        PETALON_LOCATION_ID,
+        parseImportedAppData,
+      );
+      setFindings(snapshots.map((snapshot) => ({
+        snapshot,
+        activities: findPreservedFinancialActivity(snapshot.data, current),
+      })));
+      setChecked(true);
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  return (
+    <section className="settings-section preserved-changes" aria-labelledby="device-recovery-heading">
+      <h3 id="device-recovery-heading">Emergency device recovery</h3>
+      <p>Check this phone for payments saved in its recovery storage or old API cache but missing from the current server.</p>
+      <button className="tool-button" type="button" disabled={checking} onClick={() => void checkDevice()}>
+        {checking ? 'Checking this device…' : 'Check this device for missing payments'}
+      </button>
+      {checked && uniqueActivities.length > 0 ? (
+        <div className="device-recovery-result" role="status">
+          <p className="preserved-changes-summary">
+            Found {uniqueActivities.length} {uniqueActivities.length === 1 ? 'payment' : 'payments'} on this device that are not in server revision {sharedRevision} ({formatEuro(total)}):
+          </p>
+          <ul>
+            {uniqueActivities.map((activity) => (
+              <li key={activity.transactionId}>{activity.label} — {formatEuro(activity.amount)}</li>
+            ))}
+          </ul>
+          {findings.filter((finding) => finding.activities.length > 0).map((finding, index) => (
+            <button
+              className="auth-submit auth-status-action"
+              type="button"
+              key={`${finding.snapshot.source}-${finding.snapshot.serverRevision ?? 'unknown'}-${index}`}
+              onClick={() => void savePreservedRecoverySnapshot(
+                finding.snapshot.data,
+                finding.snapshot.serverRevision,
+                finding.snapshot.source,
+              )}
+            >
+              Save recovered {finding.snapshot.source === 'pending-state' ? 'pending copy' : 'cached copy'}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {checked && findings.length > 0 && uniqueActivities.length === 0 ? (
+        <p className="backup-message" role="status">Device data was found, but it contains no additional active payments compared with the current server.</p>
+      ) : null}
+      {checked && findings.length === 0 ? (
+        <p className="backup-message" role="status">No preserved payment copy was found on this device. Do not clear Safari data; this check does not change or delete anything.</p>
+      ) : null}
+    </section>
+  );
+}
+
+function SettingsPage({ view, backupMessage, importInputRef, savedSurnames, onDailyReset, onExport, onImport, onImportFile, onResetAppData, onDeleteSurname, onShowTransactions, onShowReport, onBackToSettings, transactions, reportArchive, onDeleteTransaction, membership, capabilities, authenticatedUser, authActionError, signOutPending, onSignOut, currentAppData, sharedRevision }: {
   view: SettingsView;
   backupMessage: string | null;
   importInputRef: MutableRefObject<HTMLInputElement | null>;
@@ -3395,6 +3500,8 @@ function SettingsPage({ view, backupMessage, importInputRef, savedSurnames, onDa
   authActionError: string | null;
   signOutPending: boolean;
   onSignOut: () => Promise<void>;
+  currentAppData: AppData;
+  sharedRevision: number;
 }) {
   if (view === 'transactions') {
     return <section className="settings-subpage"><button type="button" className="settings-back" onClick={onBackToSettings}>Back to Settings</button><TransactionsPage transactions={transactions} onDelete={onDeleteTransaction} /></section>;
@@ -3404,6 +3511,11 @@ function SettingsPage({ view, backupMessage, importInputRef, savedSurnames, onDa
   }
   return <section className="settings-page" aria-labelledby="settings-heading">
     <header className="report-hero"><p className="eyebrow">Shared Petalon controls</p><h2 id="settings-heading">Settings</h2></header>
+    <DeviceRecoverySection
+      authenticatedUserId={authenticatedUser.id}
+      current={currentAppData}
+      sharedRevision={sharedRevision}
+    />
     <section className="settings-section"><h3>Records</h3><div className="settings-menu-actions"><button type="button" className="tool-button" onClick={onShowTransactions}>Transactions</button><button type="button" className="tool-button" onClick={onShowReport}>Reports</button></div></section>
     {capabilities.canRunDailyReset ? <section className="settings-section"><h3>Daily Reset</h3><p>Start a fresh shared business day and clear current-day sales.</p><button type="button" className="reset-button" onClick={onDailyReset}>Daily Reset</button></section> : null}
     <section className="settings-section"><h3>Backups</h3><p>{capabilities.canUseDestructiveSharedTools ? 'Export the current shared Petalon state, or explicitly replace it by importing a compatible backup.' : 'Export the current shared Petalon state.'}</p><div className="tool-buttons">{capabilities.canExportBackup ? <button type="button" className="tool-button" onClick={onExport}>Export Backup</button> : null}{capabilities.canUseDestructiveSharedTools ? <button type="button" className="tool-button" onClick={onImport}>Import Backup</button> : null}</div>{capabilities.canUseDestructiveSharedTools ? <input ref={importInputRef} className="file-input" type="file" accept="application/json,.json" onChange={(event) => onImportFile(event.target.files?.[0])} /> : null}{backupMessage ? <p className="backup-message">{backupMessage}</p> : null}</section>
@@ -4217,6 +4329,43 @@ function BedIcon() {
   );
 }
 
+async function savePreservedRecoverySnapshot(
+  preserved: AppData,
+  serverRevision: number | null,
+  source = 'device',
+) {
+  const exportedAt = new Date().toISOString();
+  const payload = createPreservedAppDataRecoveryFile(
+    preserved,
+    PETALON_LOCATION_ID,
+    serverRevision,
+    exportedAt,
+  );
+  const file = new File(
+    [JSON.stringify(payload, null, 2)],
+    `petalon-preserved-${source}-${exportedAt.slice(0, 19).replace(/[:T]/g, '-')}.json`,
+    { type: 'application/json' },
+  );
+
+  if (navigator.canShare?.({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title: 'Petalon preserved changes' });
+      return;
+    } catch {
+      // A cancelled/failed share can still use the download fallback below.
+    }
+  }
+
+  const url = URL.createObjectURL(file);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = file.name;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+}
+
 function PreservedChangesPanel({
   preserved,
   current,
@@ -4226,57 +4375,29 @@ function PreservedChangesPanel({
   current: AppData | null;
   serverRevision: number | null;
 }) {
-  const paidSetPayments = findPreservedPaidSetPayments(preserved, current);
-  const total = paidSetPayments.reduce((sum, payment) => sum + payment.amount, 0);
+  const financialActivity = findPreservedFinancialActivity(preserved, current);
+  const total = financialActivity.reduce((sum, activity) => sum + activity.amount, 0);
 
   async function saveRecoveryFile() {
-    const exportedAt = new Date().toISOString();
-    const payload = createPreservedAppDataRecoveryFile(
+    await savePreservedRecoverySnapshot(
       preserved,
-      PETALON_LOCATION_ID,
       serverRevision,
-      exportedAt,
+      'unsaved-app-data',
     );
-    const file = new File(
-      [JSON.stringify(payload, null, 2)],
-      `petalon-preserved-changes-${exportedAt.slice(0, 19).replace(/[:T]/g, '-')}.json`,
-      { type: 'application/json' },
-    );
-
-    if (navigator.canShare?.({ files: [file] })) {
-      try {
-        await navigator.share({
-          files: [file],
-          title: 'Petalon preserved changes',
-        });
-        return;
-      } catch {
-        // A cancelled/failed share can still use the download fallback below.
-      }
-    }
-
-    const url = URL.createObjectURL(file);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = file.name;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
   }
 
   return (
     <section className="preserved-changes" aria-labelledby="preserved-changes-heading">
       <h2 id="preserved-changes-heading">Preserved on this device</h2>
-      {paidSetPayments.length ? (
+      {financialActivity.length ? (
         <>
           <p className="preserved-changes-summary">
-            {paidSetPayments.length} paid {paidSetPayments.length === 1 ? 'set' : 'sets'} not found in the current server snapshot ({formatEuro(total)}):
+            {financialActivity.length} saved {financialActivity.length === 1 ? 'payment' : 'payments'} from this device not found in the current server snapshot ({formatEuro(total)}):
           </p>
           <ul>
-            {paidSetPayments.map((payment) => (
-              <li key={payment.transactionId}>
-                Set {payment.setId} — {formatEuro(payment.amount)}
+            {financialActivity.map((activity) => (
+              <li key={activity.transactionId}>
+                {activity.label} — {formatEuro(activity.amount)}
               </li>
             ))}
           </ul>

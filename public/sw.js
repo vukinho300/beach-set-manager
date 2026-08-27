@@ -1,4 +1,5 @@
 const CACHE_NAME = 'beach-set-manager-v2';
+const PRESERVED_RECOVERY_CACHE = 'beach-set-manager-v1';
 const APP_SHELL = ['/', '/manifest.webmanifest', '/icons/icon.svg', '/icons/maskable-icon.svg'];
 
 function isSameOriginGet(request) {
@@ -15,7 +16,12 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
+      // Keep v1 temporarily: an affected device may contain the only cached
+      // copy of an incident-era location_state response. The v2 worker never
+      // reads it for normal requests; the in-app recovery scanner is read-only.
+      .then((keys) => Promise.all(keys
+        .filter((key) => key !== CACHE_NAME && key !== PRESERVED_RECOVERY_CACHE)
+        .map((key) => caches.delete(key))))
       .then(() => self.clients.claim()),
   );
 });

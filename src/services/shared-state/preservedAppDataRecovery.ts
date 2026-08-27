@@ -7,6 +7,14 @@ export type PreservedPaidSetPayment = {
   createdAt: string;
 };
 
+export type PreservedFinancialActivity = {
+  transactionId: string;
+  type: Transaction['type'];
+  label: string;
+  amount: number;
+  createdAt: string;
+};
+
 export type PreservedAppDataRecoveryFile = {
   app: 'Beach Set Manager';
   kind: 'preserved-unsaved-app-data';
@@ -57,6 +65,47 @@ export function findPreservedPaidSetPayments(
       }];
     }, [])
     .sort((first, second) => first.setId - second.setId);
+}
+
+function getActivityLabel(transaction: Transaction): string {
+  if (transaction.resourceLabel?.trim()) {
+    return transaction.resourceLabel.trim();
+  }
+
+  const fallbackLabels: Record<Transaction['type'], string> = {
+    beach_set: 'Beach set',
+    bed: 'Bed',
+    sunbed: 'Non-numbered sunbeds',
+    beach_reservation: 'Beach reservation',
+    aquapark: 'Aquapark entry',
+  };
+
+  return fallbackLabels[transaction.type];
+}
+
+export function findPreservedFinancialActivity(
+  preserved: AppData,
+  current: AppData | null,
+): PreservedFinancialActivity[] {
+  const currentTransactionIds = new Set(
+    current?.transactions.map((transaction) => transaction.id) ?? [],
+  );
+
+  return preserved.transactions
+    .filter((transaction) => (
+      isActive(transaction) &&
+      !currentTransactionIds.has(transaction.id) &&
+      Number.isFinite(transaction.amount) &&
+      transaction.amount > 0
+    ))
+    .map((transaction) => ({
+      transactionId: transaction.id,
+      type: transaction.type,
+      label: getActivityLabel(transaction),
+      amount: transaction.amount,
+      createdAt: transaction.createdAt,
+    }))
+    .sort((first, second) => first.createdAt.localeCompare(second.createdAt));
 }
 
 export function createPreservedAppDataRecoveryFile(
