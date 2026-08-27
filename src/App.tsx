@@ -53,15 +53,23 @@ import type { ActivePetalonMembership } from './services/membership/petalonMembe
 import { usePetalonMembership } from './services/membership/usePetalonMembership';
 import {
   areSharedStatesEqual,
+  type SharedDeviceSafety,
   type SharedRefreshStatus,
   type SharedSyncStatus,
+  type SharedUpdateAdmission,
 } from './services/shared-state/sharedStateController';
 import {
   consumeOperationalSnapshot,
   createOperationalAppDataBridge,
+  isIncomingAuthoritativeSnapshot,
   stageAuthoritativeSnapshot,
 } from './services/shared-state/operationalAppDataBridge';
 import { useSharedAppData } from './services/shared-state/useSharedAppData';
+import {
+  scheduleAdmissionWatchdog,
+  shouldArmAdmissionWatchdog,
+  shouldLockOperationalMutations,
+} from './services/shared-state/operationalWriteSafety';
 import {
   scanDeviceRecoverySnapshots,
   type DeviceRecoverySnapshot,
@@ -1283,9 +1291,13 @@ function OperationalApp({
   sharedAppData,
   sharedRevision,
   sharedSyncStatus,
+  sharedDeviceSafety,
   sharedRefreshStatus,
   sharedSyncMessage,
+  onMutationVisible,
   onAppDataChange,
+  onLocalSafetyBlock,
+  onRetrySecuringChange,
   membership,
   authenticatedUser,
   authActionError,
@@ -1295,9 +1307,13 @@ function OperationalApp({
   sharedAppData: AppData;
   sharedRevision: number;
   sharedSyncStatus: SharedSyncStatus;
+  sharedDeviceSafety: SharedDeviceSafety;
   sharedRefreshStatus: SharedRefreshStatus;
   sharedSyncMessage?: string;
-  onAppDataChange: (nextState: AppData) => void;
+  onMutationVisible: () => number;
+  onAppDataChange: (nextState: AppData, mutationSequence?: number) => SharedUpdateAdmission;
+  onLocalSafetyBlock: (mutationSequence?: number) => void;
+  onRetrySecuringChange: () => SharedUpdateAdmission;
   membership: ActivePetalonMembership;
   authenticatedUser: AuthenticatedUser;
   authActionError: string | null;
@@ -1335,6 +1351,10 @@ function OperationalApp({
   const [settingsView, setSettingsView] = useState<SettingsView>('menu');
   const [activeEditor, setActiveEditor] = useState<ActiveEditor | null>(null);
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
+  const [localSafetyStop, setLocalSafetyStop] = useState<{
+    reason: string;
+    preservedData: AppData;
+  } | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const beachOneRef = useRef<HTMLElement | null>(null);
   const beachTwoRef = useRef<HTMLElement | null>(null);
@@ -1351,6 +1371,75 @@ function OperationalApp({
   const lastVisibleScrollYRef = useRef(
     initialContinuity.scrollPositions[initialContinuity.activeTab],
   );
+  const currentLocalAppData = useMemo<AppData>(() => ({
+    sets,
+    extraBeds,
+    beachReservations,
+    savedSurnames,
+    sunbedSales,
+    aquaparkEntries,
+    transactions,
+    reportArchive,
+    lastAutomaticResetDate,
+  }), [
+    sets,
+    extraBeds,
+    beachReservations,
+    savedSurnames,
+    sunbedSales,
+    aquaparkEntries,
+    transactions,
+    reportArchive,
+    lastAutomaticResetDate,
+  ]);
+  const localMatchesController = areSharedStatesEqual(currentLocalAppData, sharedAppData);
+  const receivingAuthoritativeSnapshot = isIncomingAuthoritativeSnapshot(
+    appDataBridgeRef.current,
+    currentLocalAppData,
+    sharedAppData,
+    areSharedStatesEqual,
+  );
+  const visibleStateTrackedByController = localMatchesController
+    || receivingAuthoritativeSnapshot;
+  const hasUnadmittedLocalDivergence = !visibleStateTrackedByController;
+  const operationalMutationsLocked = shouldLockOperationalMutations(
+    visibleStateTrackedByController,
+    sharedDeviceSafety,
+    localSafetyStop !== null,
+  );
+  const hardSafetyStop = localSafetyStop !== null || sharedDeviceSafety === 'blocked';
+  const displayedDeviceSafety: SharedDeviceSafety = hardSafetyStop
+    ? 'blocked'
+    : hasUnadmittedLocalDivergence
+      ? 'securing'
+      : sharedDeviceSafety;
+  const displayedSyncStatus: SharedSyncStatus = hasUnadmittedLocalDivergence
+    ? 'saving'
+    : sharedSyncStatus;
+  const displayedSyncMessage = hardSafetyStop
+    ? 'STOP — THIS CHANGE IS NOT SECURED'
+    : hasUnadmittedLocalDivergence
+      ? 'Securing this visible change...'
+      : receivingAuthoritativeSnapshot
+        ? 'Refreshing shared data...'
+        : sharedSyncMessage ?? (
+          sharedDeviceSafety === 'securing'
+            ? 'Securing this change on your device...'
+            : sharedDeviceSafety === 'durable' && sharedSyncStatus !== 'saved'
+              ? 'Not saved to server yet — safely preserved on this device'
+              : sharedSyncStatus === 'saving'
+                ? 'Saving shared data...'
+                : sharedSyncStatus === 'pending'
+                  ? 'Not saved yet — retrying. Changes are preserved on this device.'
+                  : sharedRefreshStatus === 'refreshing'
+                    ? 'Refreshing shared data...'
+                    : sharedRefreshStatus === 'stale'
+                      ? 'Connection interrupted — showing confirmed shared data.'
+                      : `Shared data saved - revision ${sharedRevision}`
+        );
+  const operationalMutationsLockedRef = useRef(operationalMutationsLocked);
+  const visibleMutationSequenceRef = useRef<number | undefined>(undefined);
+  operationalMutationsLockedRef.current = operationalMutationsLocked;
 
   function cancelScheduledScrollRestore() {
     if (scrollRestoreFrameRef.current !== null) {
@@ -1407,6 +1496,10 @@ function OperationalApp({
       return;
     }
 
+    if (localSafetyStop || sharedDeviceSafety === 'blocked') {
+      return;
+    }
+
     if (!stageAuthoritativeSnapshot(
       appDataBridgeRef.current,
       sharedAppData,
@@ -1429,30 +1522,104 @@ function OperationalApp({
     setLastAutomaticResetDate(
       sharedAppData.lastAutomaticResetDate ?? getLocalDateKey(),
     );
-  }, [sharedAppData]);
+  }, [localSafetyStop, sharedAppData, sharedDeviceSafety]);
 
   useEffect(() => {
-    const nextAppData = {
-      sets,
-      extraBeds,
-      beachReservations,
-      savedSurnames,
-      sunbedSales,
-      aquaparkEntries,
-      transactions,
-      reportArchive,
-      lastAutomaticResetDate,
-    };
+    if (localMatchesController) {
+      visibleMutationSequenceRef.current = undefined;
+      return;
+    }
+    if (receivingAuthoritativeSnapshot) {
+      return;
+    }
+    if (appDataBridgeRef.current.pendingAuthoritativeSnapshot !== null) {
+      return;
+    }
+    visibleMutationSequenceRef.current ??= onMutationVisible();
+  }, [localMatchesController, onMutationVisible, receivingAuthoritativeSnapshot]);
+
+  useEffect(() => {
     if (!consumeOperationalSnapshot(
       appDataBridgeRef.current,
-      nextAppData,
+      currentLocalAppData,
       areSharedStatesEqual,
     )) {
       return;
     }
 
-    onAppDataChange(nextAppData);
-  }, [sets, extraBeds, beachReservations, savedSurnames, sunbedSales, aquaparkEntries, transactions, reportArchive, lastAutomaticResetDate, onAppDataChange]);
+    const admission = onAppDataChange(
+      currentLocalAppData,
+      visibleMutationSequenceRef.current,
+    );
+    if (admission.status === 'rejected') {
+      setLocalSafetyStop({
+        reason: admission.reason,
+        preservedData: currentLocalAppData,
+      });
+    }
+  }, [currentLocalAppData, onAppDataChange]);
+
+  useEffect(() => {
+    if (!shouldArmAdmissionWatchdog(
+      visibleStateTrackedByController,
+      sharedSyncStatus,
+      sharedDeviceSafety,
+    )) {
+      return;
+    }
+
+    return scheduleAdmissionWatchdog(() => {
+      onLocalSafetyBlock(visibleMutationSequenceRef.current);
+      setLocalSafetyStop((current) => current ?? {
+        reason: 'admission_timeout',
+        preservedData: currentLocalAppData,
+      });
+    });
+  }, [
+    currentLocalAppData,
+    onLocalSafetyBlock,
+    sharedDeviceSafety,
+    sharedSyncStatus,
+    visibleStateTrackedByController,
+  ]);
+
+  useEffect(() => {
+    if (
+      localSafetyStop
+      && sharedDeviceSafety !== 'blocked'
+      && areSharedStatesEqual(localSafetyStop.preservedData, sharedAppData)
+    ) {
+      setLocalSafetyStop(null);
+    }
+  }, [localSafetyStop, sharedAppData, sharedDeviceSafety]);
+
+  async function exportHardStopRecovery() {
+    const preserved = localSafetyStop?.preservedData ?? currentLocalAppData;
+    await savePreservedRecoverySnapshot(
+      preserved,
+      authenticatedUser.id,
+      sharedRevision,
+      'hard-stop',
+    );
+  }
+
+  function retryHardStop() {
+    const controllerRetry = onRetrySecuringChange();
+    if (controllerRetry.status === 'accepted' && controllerRetry.kind === 'queued') {
+      return;
+    }
+
+    const preserved = localSafetyStop?.preservedData ?? currentLocalAppData;
+    const admission = onAppDataChange(
+      preserved,
+      visibleMutationSequenceRef.current,
+    );
+    if (admission.status === 'accepted') {
+      return;
+    }
+
+    setLocalSafetyStop({ reason: admission.reason, preservedData: preserved });
+  }
 
   useEffect(() => {
     transactionsRef.current = transactions;
@@ -1572,6 +1739,10 @@ function OperationalApp({
     : null;
 
   function completeDailyReset(resetDate: string, message?: string) {
+    if (operationalMutationsLockedRef.current) {
+      return;
+    }
+    operationalMutationsLockedRef.current = true;
     const closingDate = lastAutomaticResetDateRef.current;
     const closingTransactions = transactionsRef.current;
     setReportArchive((currentArchive) => archiveTransactionsForDate(currentArchive, closingDate, closingTransactions));
@@ -1712,6 +1883,10 @@ function OperationalApp({
   }
 
   function saveSet(setId: number, status: SetStatus, details?: Partial<BeachSet>) {
+    if (operationalMutationsLockedRef.current) {
+      return;
+    }
+    operationalMutationsLockedRef.current = true;
     const price = status === 'paid' ? normalizePositiveMoney(details?.price) : undefined;
     const transaction = price ? {
       id: createReservationId('transaction'), type: 'beach_set' as const, amount: price, createdAt: new Date().toISOString(),
@@ -1733,6 +1908,10 @@ function OperationalApp({
   }
 
   function saveBed(bedId: BedId, status: BedStatus, details?: Partial<ExtraBed>) {
+    if (operationalMutationsLockedRef.current) {
+      return;
+    }
+    operationalMutationsLockedRef.current = true;
     const price = status === 'paid' ? normalizePositiveMoney(details?.price) : undefined;
     const transaction = price ? {
       id: createReservationId('transaction'), type: 'bed' as const, amount: price, createdAt: new Date().toISOString(),
@@ -1954,6 +2133,10 @@ function OperationalApp({
   }
 
   function saveSunbedSale(details: { quantity: number; totalAmount: number; description?: string }, saleId?: string) {
+    if (operationalMutationsLockedRef.current) {
+      return;
+    }
+    operationalMutationsLockedRef.current = true;
     const now = new Date().toISOString();
     const id = saleId ?? createReservationId('sunbed-sale');
     const sale: NonNumberedSunbedSale = { id, quantity: details.quantity, totalAmount: details.totalAmount, description: details.description?.trim() || undefined, createdAt: now };
@@ -1984,6 +2167,10 @@ function OperationalApp({
   }
 
   function saveAquaparkEntry(details: AquaparkEntryDetails) {
+    if (operationalMutationsLockedRef.current) {
+      return;
+    }
+    operationalMutationsLockedRef.current = true;
     const entry = createAquaparkEntry(details);
     setAquaparkEntries((currentEntries) => [
       entry,
@@ -2254,27 +2441,39 @@ function OperationalApp({
   }
 
   return (
-    <main className={`app-shell tab-${activeTab}${activeTab === 'beaches' ? ' beaches-active' : ''}`}>
+    <main className={`app-shell tab-${activeTab}${activeTab === 'beaches' ? ' beaches-active' : ''}${operationalMutationsLocked ? ' operational-mutations-locked' : ''}`}>
       <TopNavigation activeTab={activeTab} onSelectTab={selectTab} />
       <div
-        className={`shared-sync-status shared-sync-${sharedSyncStatus} shared-refresh-${sharedRefreshStatus}`}
-        role={sharedSyncStatus === 'pending' ? 'alert' : 'status'}
-        aria-live={sharedSyncStatus === 'pending' ? 'assertive' : 'polite'}
+        className={`shared-sync-status shared-sync-${displayedSyncStatus} shared-device-${displayedDeviceSafety} shared-refresh-${sharedRefreshStatus}`}
+        role={displayedDeviceSafety === 'blocked' ? 'alert' : 'status'}
+        aria-live={displayedDeviceSafety === 'blocked' ? 'assertive' : 'polite'}
       >
         <span className="shared-sync-dot" aria-hidden="true" />
-        {sharedSyncMessage ?? (
-          sharedSyncStatus === 'saving'
-            ? 'Saving shared data...'
-            : sharedSyncStatus === 'pending'
-              ? 'Not saved yet — retrying. Changes are preserved on this device.'
-              : sharedRefreshStatus === 'refreshing'
-                ? 'Refreshing shared data...'
-                : sharedRefreshStatus === 'stale'
-                  ? 'Connection interrupted — showing confirmed shared data.'
-                  : `Shared data saved - revision ${sharedRevision}`
-        )}
+        {displayedSyncMessage}
       </div>
 
+      {operationalMutationsLocked && !hardSafetyStop ? (
+        <div className="operational-securing-guard" aria-live="polite">
+          <div>Securing this change...</div>
+        </div>
+      ) : null}
+      {hardSafetyStop ? (
+        <section className="operational-hard-stop" role="alertdialog" aria-modal="true" aria-labelledby="operational-hard-stop-title">
+          <div className="operational-hard-stop-card">
+            <p className="operational-hard-stop-kicker">STOP</p>
+            <h2 id="operational-hard-stop-title">THIS CHANGE IS NOT SECURED</h2>
+            <p>Do not enter another set, bed, sunbed or Aquapark customer.</p>
+            <p>Keep this app open. The latest visible data is preserved in memory so you can retry or save an emergency recovery file.</p>
+            <div className="operational-hard-stop-actions">
+              <button type="button" onClick={retryHardStop}>Retry securing change</button>
+              <button type="button" onClick={() => void exportHardStopRecovery()}>Save emergency recovery file</button>
+            </div>
+            <p className="operational-hard-stop-detail">Safety code: {localSafetyStop?.reason ?? 'device_durability_failed'}</p>
+          </div>
+        </section>
+      ) : null}
+
+      <fieldset className="operational-controls" disabled={operationalMutationsLocked}>
       <div className="page-content">
       {activeTab === 'sunbeds' ? (
         <SunbedsPage
@@ -2438,6 +2637,8 @@ function OperationalApp({
           onSave={createUnassignedBeachReservation}
         />
       ) : null}
+
+      </fieldset>
 
     </main>
   );
@@ -3462,6 +3663,7 @@ function DeviceRecoverySection({
               key={`${finding.snapshot.source}-${finding.snapshot.serverRevision ?? 'unknown'}-${index}`}
               onClick={() => void savePreservedRecoverySnapshot(
                 finding.snapshot.data,
+                authenticatedUserId,
                 finding.snapshot.serverRevision,
                 finding.snapshot.source,
               )}
@@ -4335,12 +4537,14 @@ function BedIcon() {
 
 async function savePreservedRecoverySnapshot(
   preserved: AppData,
+  userId: string,
   serverRevision: number | null,
   source = 'device',
 ) {
   const exportedAt = new Date().toISOString();
   const payload = createPreservedAppDataRecoveryFile(
     preserved,
+    userId,
     PETALON_LOCATION_ID,
     serverRevision,
     exportedAt,
@@ -4374,10 +4578,12 @@ function PreservedChangesPanel({
   preserved,
   current,
   serverRevision,
+  userId,
 }: {
   preserved: AppData;
   current: AppData | null;
   serverRevision: number | null;
+  userId: string;
 }) {
   const financialActivity = findPreservedFinancialActivity(preserved, current);
   const total = financialActivity.reduce((sum, activity) => sum + activity.amount, 0);
@@ -4385,6 +4591,7 @@ function PreservedChangesPanel({
   async function saveRecoveryFile() {
     await savePreservedRecoverySnapshot(
       preserved,
+      userId,
       serverRevision,
       'unsaved-app-data',
     );
@@ -4533,6 +4740,7 @@ function App() {
           preserved={shared.state.local}
           current={shared.state.current?.state ?? null}
           serverRevision={currentRevision ?? null}
+          userId={auth.state.user.id}
         />
       </AuthStatusPage>
     );
@@ -4554,6 +4762,7 @@ function App() {
             preserved={preservedLocal}
             current={null}
             serverRevision={null}
+            userId={auth.state.user.id}
           />
         ) : null}
       </AuthStatusPage>
@@ -4565,9 +4774,13 @@ function App() {
       sharedAppData={shared.state.data}
       sharedRevision={shared.state.revision}
       sharedSyncStatus={shared.state.syncStatus}
+      sharedDeviceSafety={shared.state.deviceSafety}
       sharedRefreshStatus={shared.state.refreshStatus}
       sharedSyncMessage={shared.state.syncMessage}
+      onMutationVisible={shared.noteVisibleMutation}
       onAppDataChange={shared.update}
+      onLocalSafetyBlock={shared.recordLocalSafetyBlock}
+      onRetrySecuringChange={shared.retrySecuringChange}
       membership={membership.state.membership}
       authenticatedUser={auth.state.user}
       authActionError={auth.actionError}

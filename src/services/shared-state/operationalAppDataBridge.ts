@@ -9,6 +9,16 @@ export function createOperationalAppDataBridge<T>(
   return { current: initial, pendingAuthoritativeSnapshot: null };
 }
 
+export function isIncomingAuthoritativeSnapshot<T>(
+  bridge: OperationalAppDataBridge<T>,
+  local: T,
+  authoritative: T,
+  equals: (first: T, second: T) => boolean,
+): boolean {
+  return equals(local, bridge.current)
+    && !equals(authoritative, bridge.current);
+}
+
 export function stageAuthoritativeSnapshot<T>(
   bridge: OperationalAppDataBridge<T>,
   next: T,

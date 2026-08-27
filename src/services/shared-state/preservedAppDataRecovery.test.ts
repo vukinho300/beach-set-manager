@@ -89,13 +89,15 @@ describe('preserved AppData recovery', () => {
 
     expect(createPreservedAppDataRecoveryFile(
       preserved,
+      'b5771919-8ee9-49d5-b7f5-8e634ee1dcbf',
       '00000000-0000-4000-8000-000000000001',
       279,
       '2026-08-27T11:30:00.000Z',
     )).toMatchObject({
       app: 'Beach Set Manager',
       kind: 'preserved-unsaved-app-data',
-      version: 1,
+      version: 2,
+      userId: 'b5771919-8ee9-49d5-b7f5-8e634ee1dcbf',
       locationId: '00000000-0000-4000-8000-000000000001',
       serverRevision: 279,
       exportedAt: '2026-08-27T11:30:00.000Z',

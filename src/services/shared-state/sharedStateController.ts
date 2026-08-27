@@ -2,6 +2,13 @@ import type {
   PendingSharedStateRecord,
   PendingSharedStateStore,
 } from './pendingSharedStateStore';
+import {
+  DurabilityTimeoutError,
+  PENDING_LOAD_TIMEOUT_MS,
+  PENDING_REMOVE_TIMEOUT_MS,
+  PENDING_WRITE_TIMEOUT_MS,
+  withDurabilityDeadline,
+} from './pendingSharedStateStore';
 import type {
   LoadSharedLocationStateResult,
   SaveSharedLocationStateResult,
@@ -10,9 +17,24 @@ import type {
   SharedLocationStateRepository,
   Unsubscribe,
 } from './repository';
+import type { ClientSyncEvent, ClientSyncTelemetry } from './syncTelemetry';
 
 export type SharedSyncStatus = 'saved' | 'saving' | 'pending';
 export type SharedRefreshStatus = 'idle' | 'refreshing' | 'stale';
+export type SharedDeviceSafety = 'safe' | 'securing' | 'durable' | 'blocked';
+
+export type SharedUpdateRejectionReason =
+  | 'controller_unavailable'
+  | 'identity_mismatch'
+  | 'deactivated'
+  | 'paused'
+  | 'not_ready'
+  | 'safety_securing'
+  | 'safety_blocked';
+
+export type SharedUpdateAdmission =
+  | { status: 'accepted'; kind: 'queued' | 'no_change' }
+  | { status: 'rejected'; reason: SharedUpdateRejectionReason };
 
 export type SharedStateControllerState<T> =
   | { status: 'loading' }
@@ -22,6 +44,7 @@ export type SharedStateControllerState<T> =
       revision: number;
       generation: number;
       syncStatus: SharedSyncStatus;
+      deviceSafety: SharedDeviceSafety;
       refreshStatus: SharedRefreshStatus;
       syncMessage?: string;
       updatedAt: string;
@@ -63,6 +86,7 @@ export type SharedStateControllerOptions<T> = {
   retryDelaysMs?: readonly number[];
   scheduleRetry?: RetryScheduler;
   reconcilePendingState?: ReconcilePendingState<T>;
+  telemetry?: ClientSyncTelemetry;
 };
 
 const DEFAULT_RETRY_DELAYS_MS = [1_500, 3_000, 6_000, 12_000, 30_000] as const;
@@ -115,6 +139,7 @@ export class SharedStateController<T> {
   private readonly retryDelaysMs: readonly number[];
   private readonly scheduleRetryCallback: RetryScheduler;
   private readonly reconcilePendingState: ReconcilePendingState<T> | null;
+  private readonly telemetry: ClientSyncTelemetry | null;
   private confirmed: SharedLocationState<T> | null = null;
   private revision: number | null = null;
   private generation = 0;
@@ -136,6 +161,8 @@ export class SharedStateController<T> {
   private retryAttempt = 0;
   private retryWaiting = false;
   private cancelScheduledRetry: (() => void) | null = null;
+  private durabilityBlocked = false;
+  private activeMutationSequence: number | undefined;
 
   constructor(
     private readonly repository: SharedLocationStateRepository<T>,
@@ -152,6 +179,7 @@ export class SharedStateController<T> {
       : DEFAULT_RETRY_DELAYS_MS;
     this.scheduleRetryCallback = options.scheduleRetry ?? defaultRetryScheduler;
     this.reconcilePendingState = options.reconcilePendingState ?? null;
+    this.telemetry = options.telemetry ?? null;
   }
 
   getSnapshot(): SharedStateControllerState<T> {
@@ -193,6 +221,8 @@ export class SharedStateController<T> {
     this.unversionedInvalidationPending = false;
     this.automaticReloadInFlight = false;
     this.lastAutomaticReloadTarget = null;
+    this.durabilityBlocked = false;
+    this.activeMutationSequence = undefined;
   }
 
   async reload(): Promise<void> {
@@ -224,22 +254,60 @@ export class SharedStateController<T> {
     }
   }
 
-  update(nextState: T): void {
-    if (this.deactivated || this.paused || this.state.status !== 'ready') {
-      return;
+  update(nextState: T, mutationSequence?: number): SharedUpdateAdmission {
+    const rejectionReason = this.getUpdateRejectionReason();
+    if (rejectionReason) {
+      this.recordTelemetry({
+        eventCode: 'CONTROLLER_REJECTED',
+        mutationSequence,
+        errorCategory: rejectionReason,
+      });
+      return { status: 'rejected', reason: rejectionReason };
+    }
+
+    if (this.state.status !== 'ready') {
+      return { status: 'rejected', reason: 'not_ready' };
     }
 
     if (this.equals(nextState, this.state.data)) {
-      return;
+      this.recordTelemetry({ eventCode: 'CONTROLLER_ACCEPTED', mutationSequence });
+      return { status: 'accepted', kind: 'no_change' };
     }
 
+    this.activeMutationSequence = mutationSequence;
     this.desiredState = nextState;
+    this.recordTelemetry({ eventCode: 'CONTROLLER_ACCEPTED', mutationSequence });
     this.publishLocalReady(
-      this.retryWaiting ? 'pending' : 'saving',
+      'saving',
       this.state.refreshStatus,
-      this.retryWaiting ? 'Not saved yet — retrying.' : undefined,
+      'Securing this change on your device...',
+      'securing',
     );
     void this.persistLatestDesiredState();
+    return { status: 'accepted', kind: 'queued' };
+  }
+
+  retrySecuringChange(): SharedUpdateAdmission {
+    if (this.deactivated) {
+      return { status: 'rejected', reason: 'deactivated' };
+    }
+    if (this.state.status !== 'ready' || this.desiredState === null) {
+      return { status: 'rejected', reason: 'not_ready' };
+    }
+    if (!this.durabilityBlocked) {
+      return { status: 'accepted', kind: 'no_change' };
+    }
+
+    this.durabilityBlocked = false;
+    this.retryWaiting = false;
+    this.publishLocalReady(
+      'saving',
+      this.currentRefreshStatus(),
+      'Retrying device safety...',
+      'securing',
+    );
+    void this.persistLatestDesiredState();
+    return { status: 'accepted', kind: 'queued' };
   }
 
   private async loadAuthoritativeState(mode: 'initial' | 'background'): Promise<number | null> {
@@ -363,9 +431,20 @@ export class SharedStateController<T> {
   ): Promise<number | null> {
     let pending: PendingSharedStateRecord<T> | null;
     try {
-      pending = await this.pendingStore.load(this.userId, this.locationId);
-    } catch {
+      pending = await withDurabilityDeadline(
+        this.pendingStore.load(this.userId, this.locationId),
+        PENDING_LOAD_TIMEOUT_MS,
+        'load',
+      );
+    } catch (error) {
       if (epoch === this.loadEpoch && !this.deactivated) {
+        this.recordTelemetry({
+          eventCode: error instanceof DurabilityTimeoutError
+            ? 'DURABILITY_TIMEOUT'
+            : 'DURABILITY_FAILED',
+          durationMs: PENDING_LOAD_TIMEOUT_MS,
+          errorCategory: 'pending_load',
+        });
         this.publish({
           status: 'unavailable',
           phase: 'load',
@@ -572,7 +651,7 @@ export class SharedStateController<T> {
   }
 
   private async persistLatestDesiredState(): Promise<void> {
-    if (!this.confirmed || !this.desiredState || this.deactivated) {
+    if (!this.confirmed || !this.desiredState || this.deactivated || this.durabilityBlocked) {
       return;
     }
 
@@ -596,30 +675,51 @@ export class SharedStateController<T> {
     this.pendingRecord = record;
     const version = ++this.pendingWriteVersion;
     const epoch = this.loadEpoch;
-    const saveRecord = async () => this.pendingStore.save(record);
+    const startedAt = Date.now();
+    this.recordTelemetry({
+      eventCode: 'DURABILITY_START',
+      mutationSequence: this.activeMutationSequence,
+      expectedRevision: record.baseRevision,
+    });
+    const saveRecord = async () => withDurabilityDeadline(
+      this.pendingStore.save(record),
+      PENDING_WRITE_TIMEOUT_MS,
+      'save',
+    );
     const operation = this.persistenceQueue.then(saveRecord, saveRecord);
     this.persistenceQueue = operation.catch(() => undefined);
 
     try {
       await operation;
-    } catch {
+    } catch (error) {
       if (epoch === this.loadEpoch && !this.deactivated && version === this.pendingWriteVersion) {
-        this.retryWaiting = true;
-        this.publishLocalReady(
-          'pending',
-          'stale',
-          'STOP - changes are not secured or saved. Keep this page open and contact Vuk; device recovery storage is retrying.',
-        );
-        this.scheduleSaveRetry();
+        this.blockForDurabilityFailure(error, 'pending_save', Date.now() - startedAt);
       }
       return;
     }
 
-    if (epoch !== this.loadEpoch || this.deactivated || version !== this.pendingWriteVersion) {
+    if (
+      epoch !== this.loadEpoch
+      || this.deactivated
+      || this.durabilityBlocked
+      || version !== this.pendingWriteVersion
+    ) {
       return;
     }
 
     this.persistedWriteVersion = version;
+    this.recordTelemetry({
+      eventCode: 'DURABILITY_CONFIRMED',
+      mutationSequence: this.activeMutationSequence,
+      expectedRevision: record.baseRevision,
+      durationMs: Date.now() - startedAt,
+    });
+    this.publishLocalReady(
+      'saving',
+      this.currentRefreshStatus(),
+      'Saved on this device — sending to the server...',
+      'durable',
+    );
     void this.drainSaves();
   }
 
@@ -628,6 +728,7 @@ export class SharedStateController<T> {
       this.deactivated ||
       this.saveInFlight ||
       this.paused ||
+      this.durabilityBlocked ||
       this.retryWaiting ||
       this.desiredState === null ||
       this.revision === null ||
@@ -640,28 +741,48 @@ export class SharedStateController<T> {
     const stateToSave = this.desiredState;
     const expectedRevision = this.revision;
     this.saveInFlight = true;
-    this.publishLocalReady('saving', this.currentRefreshStatus());
+    this.publishLocalReady(
+      'saving',
+      this.currentRefreshStatus(),
+      'Saved on this device — sending to the server...',
+      'durable',
+    );
 
     if (!(await this.persistSaveAttempt(expectedRevision, stateToSave, epoch))) {
       this.saveInFlight = false;
-      if (epoch === this.loadEpoch && !this.deactivated) {
-        this.handleRetryableSaveFailure(
-          'The save attempt could not be secured in device recovery storage.',
-        );
-      }
       return;
     }
 
     let result: SaveSharedLocationStateResult<T>;
+    const repositoryStartedAt = Date.now();
+    this.recordTelemetry({
+      eventCode: 'REPOSITORY_SAVE_START',
+      mutationSequence: this.activeMutationSequence,
+      expectedRevision,
+    });
     try {
       result = await this.repository.save(this.locationId, expectedRevision, stateToSave);
     } catch {
+      this.recordTelemetry({
+        eventCode: 'REPOSITORY_SAVE_RESULT',
+        mutationSequence: this.activeMutationSequence,
+        expectedRevision,
+        durationMs: Date.now() - repositoryStartedAt,
+        errorCategory: 'exception',
+      });
       this.saveInFlight = false;
       if (epoch === this.loadEpoch && !this.deactivated) {
         this.handleRetryableSaveFailure('Shared Petalon data could not be saved.');
       }
       return;
     }
+    this.recordTelemetry({
+      eventCode: 'REPOSITORY_SAVE_RESULT',
+      mutationSequence: this.activeMutationSequence,
+      expectedRevision,
+      durationMs: Date.now() - repositoryStartedAt,
+      errorCategory: result.status,
+    });
     this.saveInFlight = false;
 
     if (epoch !== this.loadEpoch || this.deactivated) {
@@ -748,16 +869,42 @@ export class SharedStateController<T> {
       updatedAt: this.now(),
     };
     this.pendingRecord = attemptedRecord;
-    const saveAttempt = async () => this.pendingStore.save(attemptedRecord);
+    const startedAt = Date.now();
+    this.recordTelemetry({
+      eventCode: 'DURABILITY_START',
+      mutationSequence: this.activeMutationSequence,
+      expectedRevision,
+      errorCategory: 'save_attempt_metadata',
+    });
+    const saveAttempt = async () => withDurabilityDeadline(
+      this.pendingStore.save(attemptedRecord),
+      PENDING_WRITE_TIMEOUT_MS,
+      'save',
+    );
     const operation = this.persistenceQueue.then(saveAttempt, saveAttempt);
     this.persistenceQueue = operation.catch(() => undefined);
 
     try {
       await operation;
       await this.persistenceQueue;
-    } catch {
+    } catch (error) {
+      if (epoch === this.loadEpoch && !this.deactivated) {
+        this.blockForDurabilityFailure(
+          error,
+          'save_attempt_metadata',
+          Date.now() - startedAt,
+        );
+      }
       return false;
     }
+
+    this.recordTelemetry({
+      eventCode: 'DURABILITY_CONFIRMED',
+      mutationSequence: this.activeMutationSequence,
+      expectedRevision,
+      durationMs: Date.now() - startedAt,
+      errorCategory: 'save_attempt_metadata',
+    });
 
     return epoch === this.loadEpoch && !this.deactivated;
   }
@@ -771,6 +918,7 @@ export class SharedStateController<T> {
     this.revision = accepted.revision;
     this.retryAttempt = 0;
     this.retryWaiting = false;
+    this.durabilityBlocked = false;
     this.cancelRetry();
     const acceptedWriteVersion = this.pendingWriteVersion;
     if (this.pendingRecord) {
@@ -815,8 +963,39 @@ export class SharedStateController<T> {
       'pending',
       'stale',
       `${message} Changes are preserved on this device and will retry.`,
+      'durable',
     );
     this.scheduleSaveRetry();
+  }
+
+  private blockForDurabilityFailure(
+    error: unknown,
+    errorCategory: string,
+    durationMs: number,
+  ): void {
+    this.durabilityBlocked = true;
+    this.retryWaiting = false;
+    this.cancelRetry();
+    const timedOut = error instanceof DurabilityTimeoutError;
+    this.recordTelemetry({
+      eventCode: timedOut ? 'DURABILITY_TIMEOUT' : 'DURABILITY_FAILED',
+      mutationSequence: this.activeMutationSequence,
+      expectedRevision: this.revision ?? undefined,
+      durationMs,
+      errorCategory,
+    });
+    this.recordTelemetry({
+      eventCode: 'CONTROLLER_BLOCKED',
+      mutationSequence: this.activeMutationSequence,
+      expectedRevision: this.revision ?? undefined,
+      errorCategory: timedOut ? 'durability_timeout' : 'durability_failed',
+    });
+    this.publishLocalReady(
+      'pending',
+      'stale',
+      'STOP — THIS CHANGE IS NOT SECURED. Do not enter another customer. Keep this app open.',
+      'blocked',
+    );
   }
 
   private scheduleSaveRetry(): void {
@@ -827,6 +1006,12 @@ export class SharedStateController<T> {
     const index = Math.min(this.retryAttempt, this.retryDelaysMs.length - 1);
     const delay = this.retryDelaysMs[index];
     this.retryAttempt += 1;
+    this.recordTelemetry({
+      eventCode: 'RETRY_SCHEDULED',
+      mutationSequence: this.activeMutationSequence,
+      expectedRevision: this.revision ?? undefined,
+      durationMs: delay,
+    });
     this.cancelScheduledRetry = this.scheduleRetryCallback(() => {
       this.cancelScheduledRetry = null;
       this.retryPendingSave();
@@ -854,7 +1039,11 @@ export class SharedStateController<T> {
 
   private async removePendingRecord(): Promise<void> {
     try {
-      await this.pendingStore.remove(this.userId, this.locationId);
+      await withDurabilityDeadline(
+        this.pendingStore.remove(this.userId, this.locationId),
+        PENDING_REMOVE_TIMEOUT_MS,
+        'remove',
+      );
     } catch {
       // The accepted server row remains authoritative. If this stale recovery
       // record survives, the next startup recognizes that its desired state is
@@ -869,6 +1058,8 @@ export class SharedStateController<T> {
     this.persistedWriteVersion = 0;
     this.retryWaiting = false;
     this.retryAttempt = 0;
+    this.durabilityBlocked = false;
+    this.activeMutationSequence = undefined;
   }
 
   private handleRemoteInvalidation(invalidation: SharedLocationStateInvalidation): void {
@@ -974,10 +1165,38 @@ export class SharedStateController<T> {
     return this.state.status === 'ready' ? this.state.refreshStatus : 'idle';
   }
 
+  private getUpdateRejectionReason(): SharedUpdateRejectionReason | null {
+    if (this.deactivated) {
+      return 'deactivated';
+    }
+    if (this.durabilityBlocked) {
+      return 'safety_blocked';
+    }
+    if (this.state.status === 'ready' && this.state.deviceSafety === 'securing') {
+      return 'safety_securing';
+    }
+    if (this.paused) {
+      return 'paused';
+    }
+    if (this.state.status !== 'ready') {
+      return 'not_ready';
+    }
+    return null;
+  }
+
+  private recordTelemetry(event: ClientSyncEvent): void {
+    try {
+      this.telemetry?.record(event);
+    } catch {
+      // Diagnostics must never change controller behavior.
+    }
+  }
+
   private publishLocalReady(
     syncStatus: SharedSyncStatus,
     refreshStatus: SharedRefreshStatus,
     syncMessage?: string,
+    deviceSafety: SharedDeviceSafety = syncStatus === 'saved' ? 'safe' : 'durable',
   ): void {
     if (!this.confirmed || !this.desiredState) {
       return;
@@ -989,6 +1208,7 @@ export class SharedStateController<T> {
       revision: this.confirmed.revision,
       generation: this.generation,
       syncStatus,
+      deviceSafety,
       refreshStatus,
       ...(syncMessage ? { syncMessage } : {}),
       updatedAt: this.confirmed.updatedAt,
@@ -1007,6 +1227,7 @@ export class SharedStateController<T> {
       revision: value.revision,
       generation: this.generation,
       syncStatus,
+      deviceSafety: 'safe',
       refreshStatus,
       updatedAt: value.updatedAt,
       ...(value.updatedBy ? { updatedBy: value.updatedBy } : {}),

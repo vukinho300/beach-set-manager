@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { SharedStateControllerState } from './sharedStateController';
 import {
   scopeSharedStateToAuthenticatedUser,
+  admitSharedUpdateForBinding,
   type UserScopedSharedState,
 } from './useSharedAppData';
 
@@ -14,12 +15,39 @@ function ready(owner: string, revision: number): SharedStateControllerState<Test
     revision,
     generation: 1,
     syncStatus: 'saved',
+    deviceSafety: 'safe',
     refreshStatus: 'idle',
     updatedAt: '2026-08-26T00:00:00.000Z',
   };
 }
 
 describe('authenticated-user shared-state scoping', () => {
+  it('rejects a visible mutation explicitly when no controller binding exists', () => {
+    expect(admitSharedUpdateForBinding(
+      'user-a',
+      null,
+      { owner: 'visible-local-change' },
+      1,
+    )).toEqual({
+      status: 'rejected',
+      reason: 'controller_unavailable',
+    });
+  });
+
+  it('rejects an account-mismatched controller instead of silently ignoring it', () => {
+    const update = vi.fn();
+    expect(admitSharedUpdateForBinding(
+      'user-b',
+      { userId: 'user-a', controller: { update } },
+      { owner: 'user-b' },
+      2,
+    )).toEqual({
+      status: 'rejected',
+      reason: 'identity_mismatch',
+    });
+    expect(update).not.toHaveBeenCalled();
+  });
+
   it('exposes ready shared data only to the user identity that loaded it', () => {
     const userAState: UserScopedSharedState<TestData> = {
       userId: 'user-a',
