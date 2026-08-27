@@ -60,7 +60,7 @@ Do not describe a specific IndexedDB exception as proven. A closed/hung IndexedD
 13. **Ambiguity preserves evidence.** Never force an old snapshot over newer server state merely to make a conflict disappear.
 14. **Release testing must reproduce the real round.** Unit tests alone are insufficient for reliability changes.
 15. **The whole-AppData JSONB model is not the final commercial write model.** Real multi-user concurrency and the First Incident are evidence to move toward immutable business operations.
-16. **Daily reconciliation must expose unexplained revenue drift.** The system must not rely on workers remembering a paper/manual comparison outside the app; missing reconciliation must remain visibly incomplete to owner/admin users.
+16. **Owner revenue comparison is a detection layer.** Real revenue is a boss-entered external reference. Workers must not be burdened with reconciliation workflow, and the comparison must not be mistaken for write durability or recovery.
 
 # Preventative Database Step — Reliability R3
 
@@ -74,27 +74,28 @@ The write model should progressively move from one whole-location revision towar
 
 Server-side reconciliation should be possible between accepted operations, financial ledger totals, current entity state and daily reports. Database backup/PITR should be evaluated before commercial rollout for accepted server data, but it cannot recover an operation that never reached durable client/server storage.
 
-# Layer 5 — Daily Revenue Reconciliation
+# Layer 5 — Owner Real Revenue vs App Revenue
 
-The app should include a **Daily Compare** end-of-day workflow per location. This is an operational control, not a substitute for write durability or backups.
+Layer 5 is a **boss-only** audit/reporting function. It is not a Worker task and it is not tied to a Marketino or fiscal integration.
 
-The closing worker should enter the location's real/external daily revenue total (normally the Marketino/fiscal closing total). The app revenue is calculated automatically from the server-side operational/financial data and is read-only. The system stores the submitted real revenue, the app revenue at submission, absolute difference, percentage difference, business date, location, submitting user, submission time and the server revision/ledger checkpoint used for the comparison.
+For a location/date, Mark (`LOCATION_ADMIN`) or Vuk (`PLATFORM_OWNER`) may manually enter the location's **Real Revenue** value. **App Revenue** is calculated automatically from authoritative application data and is read-only. Workers do not enter, edit, or need to see this comparison.
 
-A difference greater than **10%** requires a written reason before submission can complete. The absolute EUR difference is always shown. Before implementation, evaluate whether a second configurable absolute-value threshold should complement the 10% rule so a financially large discrepancy below 10% is not treated as unimportant.
+The owner view should show, for each authorized location:
 
-The workflow must not depend on memory alone. Near end-of-day the location should show a persistent **Daily revenue check required** reminder until submitted. If nobody submits it, the owner/admin view shows **Missing reconciliation**, not zero difference and not a green status. Core operational entry must not be destroyed or reset merely because the reconciliation is missing.
+- App Revenue;
+- Real Revenue if entered;
+- absolute EUR difference;
+- percentage difference.
 
-Access/display rules:
+For non-zero Real Revenue, percentage difference is `abs(App Revenue - Real Revenue) / Real Revenue * 100`. A percentage greater than **10%** is visually red. Exactly 10% is not red. If both values are zero, the difference is 0%. If Real Revenue is zero while App Revenue is non-zero, show a clear red mismatch state instead of inventing a misleading finite percentage.
 
-- Petalon Worker sees and submits only Petalon app revenue vs Petalon real revenue.
-- Koversada Worker sees and submits only Koversada app revenue vs Koversada real revenue.
-- Mark (`LOCATION_ADMIN`) and Vuk (`PLATFORM_OWNER`) can inspect both locations they are authorized for.
-- Owner dashboard should show, for each location, **App revenue**, **Real revenue**, EUR difference, percentage difference, reconciliation status and reason when required.
-- The top combined owner summary should be able to show Petalon + Koversada app revenue and Petalon + Koversada real revenue separately rather than mixing the two concepts.
+No explanation/reason field is required. The boss can follow up with workers outside the app if a discrepancy looks suspicious.
 
-Reconciliation records should live in a separate RLS-protected server table rather than inside the monolithic `location_state` JSONB. Prefer append-only submissions/amendments or otherwise preserve an audit history: a later correction must not erase who originally submitted a discrepancy and why.
+The owner dashboard should show Petalon and Koversada separately, with App Revenue above Real Revenue and the percentage difference immediately visible. It may also show combined Petalon + Koversada App Revenue and combined Real Revenue. If a location has no Real Revenue entry, display **Not entered** rather than zero; combined Real Revenue must not pretend to be complete when one location is missing a value.
 
-Layer 5 detects and explains divergence; it does **not** itself recover a client operation that was never durably recorded. Recovery remains the responsibility of R2/R3 plus server history/backups.
+Revenue-comparison records should live in a separate RLS-protected server table, not inside `location_state`. Only active authorized owner/admin roles for that location may read/write them. Preserve audit metadata/history for edits so a later correction does not erase who entered an earlier value.
+
+Layer 5 detects business-level divergence. It does **not** recover a client operation that was never durably recorded. Recovery remains the responsibility of R2/R3 plus server history/backups.
 
 # Multi-location concurrency requirement
 
@@ -102,12 +103,10 @@ Koversada must be designed as a shared location, not a one-user app. Initially a
 
 # Post-incident release order
 
-1. Finish independent review of R2 / PR #25.
-2. Pass affected-iPhone Preview lifecycle, concurrent-device, walking-style and controlled hard-stop/recovery tests.
-3. Merge/deploy R2 only after those pass.
-4. Observe realistic production use with concurrent Petalon workers.
-5. Treat R3 immutable operations/idempotency as the next major database reliability architecture before commercial maturity and before high-concurrency Koversada operation.
-6. Add Daily Compare/reconciliation on a separate trusted server boundary without weakening operational reliability.
-7. Resume Step 10 only without weakening any Never-Again Rule.
+1. Keep R2 as the production containment layer and validate it under real concurrent Petalon use.
+2. Step 10 may proceed only without weakening any Never-Again Rule or replacing the R2 write path.
+3. Add the boss-only Real Revenue vs App Revenue comparison on a separate trusted server boundary.
+4. R3 design/development may begin before field validation, but do not replace Production operational writes with R3 until R2 has been observed under realistic concurrent use and the R3 migration has its own staged verification.
+5. Treat R3 immutable operations/idempotency as required before commercial maturity and before high-concurrency next-season use, even if it is deferred during the current internal pilot.
 
 Future severe incidents should be named `Second Incident`, `Third Incident`, etc. Each record must separate proven facts from hypotheses and update these permanent rules.
