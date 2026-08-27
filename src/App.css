@@ -4840,3 +4840,108 @@ button.existing-reservation-option {
 }
 
 /* SHARED PETALON AUTH END */
+.settings-location-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.settings-location-options button,
+.owner-revenue-date input,
+.owner-revenue-form input,
+.owner-revenue-form select {
+  min-height: 44px;
+  border: 1px solid rgba(53, 70, 60, 0.2);
+  border-radius: 12px;
+  background: #fff;
+  color: inherit;
+  padding: 0.7rem 0.9rem;
+  font: inherit;
+}
+
+.settings-location-options button.active {
+  border-color: #285d45;
+  background: #e7f3ec;
+  font-weight: 800;
+}
+
+.owner-revenue-page {
+  display: grid;
+  gap: 1rem;
+}
+
+.owner-revenue-date,
+.owner-revenue-form label {
+  display: grid;
+  gap: 0.4rem;
+  font-weight: 700;
+}
+
+.owner-revenue-form {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.owner-revenue-combined,
+.owner-revenue-location-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.85rem;
+}
+
+.owner-revenue-combined > div,
+.owner-revenue-location {
+  display: grid;
+  gap: 0.5rem;
+  border: 1px solid rgba(53, 70, 60, 0.14);
+  border-radius: 18px;
+  background: #fff;
+  padding: 1rem;
+  box-shadow: 0 8px 24px rgba(30, 48, 39, 0.07);
+}
+
+.owner-revenue-combined strong,
+.owner-revenue-location > p:first-of-type strong {
+  display: block;
+  font-size: clamp(1.55rem, 5vw, 2.5rem);
+  line-height: 1.05;
+}
+
+.owner-revenue-combined small {
+  color: #66736c;
+}
+
+.owner-revenue-location p {
+  display: grid;
+  gap: 0.2rem;
+  margin: 0;
+}
+
+.owner-revenue-location p span:first-child {
+  color: #66736c;
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.owner-revenue-difference {
+  border-top: 1px solid rgba(53, 70, 60, 0.12);
+  padding-top: 0.7rem;
+}
+
+.owner-revenue-alert {
+  color: #b42318 !important;
+  font-weight: 900;
+}
+
+.report-summary-grid.aquapark-only {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (max-width: 640px) {
+  .owner-revenue-combined,
+  .owner-revenue-location-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

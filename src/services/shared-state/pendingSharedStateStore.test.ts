@@ -30,6 +30,15 @@ function unavailableStore(): PendingSharedStateStore<TestData> {
 }
 
 describe('mirrored pending shared-state storage', () => {
+  it('never exposes Petalon pending data under the Koversada key', async () => {
+    const store = createInMemoryPendingSharedStateStore<TestData>();
+    await store.save(record);
+
+    await expect(store.load('user-a', 'location-a')).resolves.toEqual(record);
+    await expect(store.load('user-a', 'location-b')).resolves.toBeNull();
+    await expect(store.load('user-b', 'location-a')).resolves.toBeNull();
+  });
+
   it('preserves and loads pending work through the fallback when IndexedDB fails', async () => {
     const fallback = createInMemoryPendingSharedStateStore<TestData>();
     const store = createMirroredPendingSharedStateStore(unavailableStore(), fallback);

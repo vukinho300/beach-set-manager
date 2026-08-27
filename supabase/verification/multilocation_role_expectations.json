@@ -1,0 +1,20 @@
+{
+  "Petalon": {
+    "locationId": "00000000-0000-4000-8000-000000000001",
+    "profile": "PETALON_FULL",
+    "memberships": {
+      "Vuk": "PLATFORM_OWNER",
+      "Mark": "LOCATION_ADMIN",
+      "Vito": "WORKER"
+    }
+  },
+  "Koversada": {
+    "locationId": "00000000-0000-4000-8000-000000000002",
+    "profile": "KOVERSADA_AQUAPARK",
+    "memberships": {
+      "Vuk": "PLATFORM_OWNER",
+      "Mark": "LOCATION_ADMIN",
+      "koversada-radnik": "WORKER"
+    }
+  }
+}
