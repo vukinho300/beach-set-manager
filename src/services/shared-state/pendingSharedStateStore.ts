@@ -61,14 +61,20 @@ function transactionComplete(transaction: IDBTransaction): Promise<void> {
 }
 
 class IndexedDbPendingSharedStateStore<T> implements PendingSharedStateStore<T> {
+  private database: IDBDatabase | null = null;
   private databasePromise: Promise<IDBDatabase> | null = null;
 
   async load(userId: string, locationId: string): Promise<PendingSharedStateRecord<T> | null> {
-    const database = await this.openDatabase();
-    const transaction = database.transaction(STORE_NAME, 'readonly');
-    const stored = await requestResult(
-      transaction.objectStore(STORE_NAME).get(recordKey(userId, locationId)),
-    ) as StoredPendingSharedStateRecord<T> | undefined;
+    const transaction = await this.openTransaction('readonly');
+    let stored: StoredPendingSharedStateRecord<T> | undefined;
+    try {
+      stored = await requestResult(
+        transaction.objectStore(STORE_NAME).get(recordKey(userId, locationId)),
+      ) as StoredPendingSharedStateRecord<T> | undefined;
+    } catch (error) {
+      this.invalidateDatabase(transaction.db);
+      throw error;
+    }
 
     if (!stored) {
       return null;
@@ -79,20 +85,39 @@ class IndexedDbPendingSharedStateStore<T> implements PendingSharedStateStore<T> 
   }
 
   async save(record: PendingSharedStateRecord<T>): Promise<void> {
-    const database = await this.openDatabase();
-    const transaction = database.transaction(STORE_NAME, 'readwrite');
+    const transaction = await this.openTransaction('readwrite');
     transaction.objectStore(STORE_NAME).put({
       ...record,
       key: recordKey(record.userId, record.locationId),
     } satisfies StoredPendingSharedStateRecord<T>);
-    await transactionComplete(transaction);
+    try {
+      await transactionComplete(transaction);
+    } catch (error) {
+      this.invalidateDatabase(transaction.db);
+      throw error;
+    }
   }
 
   async remove(userId: string, locationId: string): Promise<void> {
-    const database = await this.openDatabase();
-    const transaction = database.transaction(STORE_NAME, 'readwrite');
+    const transaction = await this.openTransaction('readwrite');
     transaction.objectStore(STORE_NAME).delete(recordKey(userId, locationId));
-    await transactionComplete(transaction);
+    try {
+      await transactionComplete(transaction);
+    } catch (error) {
+      this.invalidateDatabase(transaction.db);
+      throw error;
+    }
+  }
+
+  private async openTransaction(mode: IDBTransactionMode): Promise<IDBTransaction> {
+    const database = await this.openDatabase();
+    try {
+      return database.transaction(STORE_NAME, mode);
+    } catch {
+      this.invalidateDatabase(database);
+      const reopened = await this.openDatabase();
+      return reopened.transaction(STORE_NAME, mode);
+    }
   }
 
   private openDatabase(): Promise<IDBDatabase> {
@@ -110,13 +135,45 @@ class IndexedDbPendingSharedStateStore<T> implements PendingSharedStateStore<T> 
             database.createObjectStore(STORE_NAME, { keyPath: 'key' });
           }
         };
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error ?? new Error('IndexedDB could not be opened.'));
-        request.onblocked = () => reject(new Error('IndexedDB upgrade was blocked.'));
+        request.onsuccess = () => {
+          const database = request.result;
+          this.database = database;
+          database.onclose = () => this.releaseDatabase(database);
+          database.onversionchange = () => {
+            database.close();
+            this.releaseDatabase(database);
+          };
+          resolve(database);
+        };
+        request.onerror = () => {
+          this.databasePromise = null;
+          reject(request.error ?? new Error('IndexedDB could not be opened.'));
+        };
+        request.onblocked = () => {
+          this.databasePromise = null;
+          reject(new Error('IndexedDB upgrade was blocked.'));
+        };
       });
     }
 
     return this.databasePromise;
+  }
+
+  private invalidateDatabase(database: IDBDatabase): void {
+    if (this.database !== database) {
+      return;
+    }
+    database.onclose = null;
+    database.onversionchange = null;
+    database.close();
+    this.releaseDatabase(database);
+  }
+
+  private releaseDatabase(database: IDBDatabase): void {
+    if (this.database === database) {
+      this.database = null;
+      this.databasePromise = null;
+    }
   }
 }
 
