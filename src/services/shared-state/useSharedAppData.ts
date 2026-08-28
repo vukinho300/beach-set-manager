@@ -2,6 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AppData } from '../../domain/appData';
 import { PETALON_LOCATION_ID } from '../../domain/petalon';
 import type { SharedLocationStateRepository } from './repository';
+import {
+  isValidAppDataReconciliationSnapshot,
+  reconcileKnownRejectedAppDataConflict,
+} from './appDataKnownConflictReconciliation';
 import { reconcileCompatibleBeachSetPendingState } from './appDataPendingRecovery';
 import {
   createBrowserPendingSharedStateStore,
@@ -100,6 +104,8 @@ export function useSharedAppData(
         userId: authenticatedUserId,
         pendingStore: configuration.pendingStore,
         reconcilePendingState: reconcileCompatibleBeachSetPendingState,
+        reconcileKnownRejectedConflict: reconcileKnownRejectedAppDataConflict,
+        validateKnownConflictCurrent: isValidAppDataReconciliationSnapshot,
         telemetry: configuration.telemetry,
       },
     );

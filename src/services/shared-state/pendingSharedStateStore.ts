@@ -4,6 +4,7 @@ export type PendingSharedStateRecord<T> = {
   baseRevision: number;
   baseState: T;
   desiredState: T;
+  automaticRebaseCount?: 0 | 1;
   attemptedRevision?: number;
   attemptedState?: T;
   createdAt: string;

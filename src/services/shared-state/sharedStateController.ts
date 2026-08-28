@@ -72,6 +72,17 @@ export type ReconcilePendingState<T> = (
   desiredState: T,
   serverState: T,
 ) => T | null;
+export type KnownRejectedConflictReconciliation<T> =
+  | { status: 'rebased'; state: T }
+  | { status: 'already-present'; state: T }
+  | { status: 'conflicting'; reason: string }
+  | { status: 'unsupported'; reason: string };
+export type ReconcileKnownRejectedConflict<T> = (input: {
+  baseState: T;
+  desiredState: T;
+  currentState: T;
+  rawCurrentState: unknown;
+}) => KnownRejectedConflictReconciliation<T>;
 export type SharedStateControllerListener<T> = (
   state: SharedStateControllerState<T>,
 ) => void;
@@ -86,6 +97,8 @@ export type SharedStateControllerOptions<T> = {
   retryDelaysMs?: readonly number[];
   scheduleRetry?: RetryScheduler;
   reconcilePendingState?: ReconcilePendingState<T>;
+  reconcileKnownRejectedConflict?: ReconcileKnownRejectedConflict<T>;
+  validateKnownConflictCurrent?: (value: unknown) => boolean;
   telemetry?: ClientSyncTelemetry;
 };
 
@@ -139,6 +152,8 @@ export class SharedStateController<T> {
   private readonly retryDelaysMs: readonly number[];
   private readonly scheduleRetryCallback: RetryScheduler;
   private readonly reconcilePendingState: ReconcilePendingState<T> | null;
+  private readonly reconcileKnownRejectedConflict: ReconcileKnownRejectedConflict<T> | null;
+  private readonly validateKnownConflictCurrent: ((value: unknown) => boolean) | null;
   private readonly telemetry: ClientSyncTelemetry | null;
   private confirmed: SharedLocationState<T> | null = null;
   private revision: number | null = null;
@@ -163,6 +178,7 @@ export class SharedStateController<T> {
   private cancelScheduledRetry: (() => void) | null = null;
   private durabilityBlocked = false;
   private activeMutationSequence: number | undefined;
+  private saveOutcomeAmbiguous = false;
 
   constructor(
     private readonly repository: SharedLocationStateRepository<T>,
@@ -179,6 +195,8 @@ export class SharedStateController<T> {
       : DEFAULT_RETRY_DELAYS_MS;
     this.scheduleRetryCallback = options.scheduleRetry ?? defaultRetryScheduler;
     this.reconcilePendingState = options.reconcilePendingState ?? null;
+    this.reconcileKnownRejectedConflict = options.reconcileKnownRejectedConflict ?? null;
+    this.validateKnownConflictCurrent = options.validateKnownConflictCurrent ?? null;
     this.telemetry = options.telemetry ?? null;
   }
 
@@ -223,6 +241,7 @@ export class SharedStateController<T> {
     this.lastAutomaticReloadTarget = null;
     this.durabilityBlocked = false;
     this.activeMutationSequence = undefined;
+    this.saveOutcomeAmbiguous = false;
   }
 
   async reload(): Promise<void> {
@@ -274,6 +293,9 @@ export class SharedStateController<T> {
       return { status: 'accepted', kind: 'no_change' };
     }
 
+    if (this.desiredState === null && this.pendingRecord === null) {
+      this.saveOutcomeAmbiguous = false;
+    }
     this.activeMutationSequence = mutationSequence;
     this.desiredState = nextState;
     this.recordTelemetry({ eventCode: 'CONTROLLER_ACCEPTED', mutationSequence });
@@ -487,6 +509,9 @@ export class SharedStateController<T> {
     this.pendingWriteVersion = 1;
     this.persistedWriteVersion = 1;
     this.desiredState = normalizedPending.desiredState;
+    this.saveOutcomeAmbiguous =
+      normalizedPending.attemptedRevision !== undefined
+      && normalizedPending.attemptedState !== undefined;
 
     if (
       server.revision === normalizedPending.baseRevision &&
@@ -622,6 +647,7 @@ export class SharedStateController<T> {
 
     const hasAttemptMetadata =
       record.attemptedRevision !== undefined || record.attemptedState !== undefined;
+    const automaticRebaseCount = record.automaticRebaseCount ?? 0;
     const attemptedState =
       record.attemptedState === undefined ? null : this.normalize(record.attemptedState);
     const hasValidAttemptMetadata =
@@ -630,7 +656,10 @@ export class SharedStateController<T> {
       (record.attemptedRevision ?? -1) >= 0 &&
       attemptedState !== null;
 
-    if (hasAttemptMetadata && !hasValidAttemptMetadata) {
+    if (
+      (automaticRebaseCount !== 0 && automaticRebaseCount !== 1)
+      || (hasAttemptMetadata && !hasValidAttemptMetadata)
+    ) {
       return null;
     }
 
@@ -638,6 +667,7 @@ export class SharedStateController<T> {
       ...record,
       baseState,
       desiredState,
+      automaticRebaseCount,
       ...(hasValidAttemptMetadata
         ? {
             attemptedRevision: record.attemptedRevision,
@@ -662,6 +692,7 @@ export class SharedStateController<T> {
       baseRevision: this.confirmed.revision,
       baseState: this.confirmed.state,
       desiredState: this.desiredState,
+      automaticRebaseCount: this.pendingRecord?.automaticRebaseCount ?? 0,
       ...(this.pendingRecord?.attemptedRevision !== undefined &&
       this.pendingRecord.attemptedState !== undefined
         ? {
@@ -714,6 +745,9 @@ export class SharedStateController<T> {
       expectedRevision: record.baseRevision,
       durationMs: Date.now() - startedAt,
     });
+    if (this.paused) {
+      return;
+    }
     this.publishLocalReady(
       'saving',
       this.currentRefreshStatus(),
@@ -753,6 +787,8 @@ export class SharedStateController<T> {
       return;
     }
 
+    const knownConflictEligibleForRequest = !this.saveOutcomeAmbiguous;
+
     let result: SaveSharedLocationStateResult<T>;
     const repositoryStartedAt = Date.now();
     this.recordTelemetry({
@@ -763,6 +799,7 @@ export class SharedStateController<T> {
     try {
       result = await this.repository.save(this.locationId, expectedRevision, stateToSave);
     } catch {
+      this.saveOutcomeAmbiguous = true;
       this.recordTelemetry({
         eventCode: 'REPOSITORY_SAVE_RESULT',
         mutationSequence: this.activeMutationSequence,
@@ -790,6 +827,30 @@ export class SharedStateController<T> {
     }
 
     if (result.status === 'conflict') {
+      const rawCurrentState = result.current?.state;
+      let knownConflictCurrentIsValid = true;
+      try {
+        knownConflictCurrentIsValid = !result.current
+          || !this.validateKnownConflictCurrent
+          || this.validateKnownConflictCurrent(rawCurrentState);
+      } catch {
+        knownConflictCurrentIsValid = false;
+      }
+      if (
+        result.current
+        && !knownConflictCurrentIsValid
+      ) {
+        this.paused = true;
+        this.publish({
+          status: 'unavailable',
+          phase: 'save',
+          message: 'The newer shared Petalon data is not valid operational application data.',
+          retryable: false,
+          local: this.desiredState ?? stateToSave,
+          pendingPreserved: true,
+        });
+        return;
+      }
       const current = result.current ? this.normalizeSharedValue(result.current) : null;
       if (result.current && !current) {
         this.paused = true;
@@ -809,6 +870,20 @@ export class SharedStateController<T> {
         return;
       }
 
+      if (
+        current
+        && knownConflictEligibleForRequest
+        && await this.tryReconcileKnownRejectedConflict(
+          current,
+          rawCurrentState,
+          expectedRevision,
+          stateToSave,
+          epoch,
+        )
+      ) {
+        return;
+      }
+
       this.paused = true;
       this.publish({
         status: 'conflict',
@@ -820,6 +895,7 @@ export class SharedStateController<T> {
     }
 
     if (result.status === 'unavailable') {
+      this.saveOutcomeAmbiguous = true;
       if (result.error.retryable) {
         this.handleRetryableSaveFailure(result.error.message);
       } else {
@@ -851,6 +927,81 @@ export class SharedStateController<T> {
     }
 
     await this.acceptSavedState(accepted, stateToSave, epoch);
+  }
+
+  private async tryReconcileKnownRejectedConflict(
+    current: SharedLocationState<T>,
+    rawCurrentState: unknown,
+    expectedRevision: number,
+    stateToSave: T,
+    epoch: number,
+  ): Promise<boolean> {
+    const pending = this.pendingRecord;
+    const latestDesired = this.desiredState;
+    if (
+      !this.reconcileKnownRejectedConflict
+      || !this.confirmed
+      || !pending
+      || !latestDesired
+      || current.revision !== expectedRevision + 1
+      || this.confirmed.revision !== expectedRevision
+      || pending.baseRevision !== expectedRevision
+      || !this.equals(pending.baseState, this.confirmed.state)
+      || pending.attemptedRevision !== expectedRevision
+      || pending.attemptedState === undefined
+      || !this.equals(pending.attemptedState, stateToSave)
+      || pending.automaticRebaseCount !== 0
+      || this.persistedWriteVersion !== this.pendingWriteVersion
+      || !this.equals(pending.desiredState, latestDesired)
+    ) {
+      return false;
+    }
+
+    let reconciliation: KnownRejectedConflictReconciliation<T>;
+    try {
+      reconciliation = this.reconcileKnownRejectedConflict({
+        baseState: pending.baseState,
+        desiredState: latestDesired,
+        currentState: current.state,
+        rawCurrentState,
+      });
+    } catch {
+      return false;
+    }
+    if (
+      reconciliation.status === 'conflicting'
+      || reconciliation.status === 'unsupported'
+    ) {
+      return false;
+    }
+
+    if (reconciliation.status === 'already-present') {
+      await this.acceptSavedState(current, latestDesired, epoch);
+      return true;
+    }
+
+    this.confirmed = current;
+    this.revision = current.revision;
+    this.desiredState = reconciliation.state;
+    this.pendingRecord = {
+      ...pending,
+      baseRevision: current.revision,
+      baseState: current.state,
+      desiredState: reconciliation.state,
+      automaticRebaseCount: 1,
+      attemptedRevision: undefined,
+      attemptedState: undefined,
+    };
+    this.saveOutcomeAmbiguous = false;
+    this.paused = false;
+    this.publishLocalReady(
+      'saving',
+      this.currentRefreshStatus(),
+      'Newer shared work found — safely combining changes...',
+      'securing',
+    );
+    await this.persistLatestDesiredState();
+    return true;
   }
 
   private async persistSaveAttempt(
@@ -919,6 +1070,7 @@ export class SharedStateController<T> {
     this.retryAttempt = 0;
     this.retryWaiting = false;
     this.durabilityBlocked = false;
+    this.saveOutcomeAmbiguous = false;
     this.cancelRetry();
     const acceptedWriteVersion = this.pendingWriteVersion;
     if (this.pendingRecord) {
@@ -1060,6 +1212,7 @@ export class SharedStateController<T> {
     this.retryAttempt = 0;
     this.durabilityBlocked = false;
     this.activeMutationSequence = undefined;
+    this.saveOutcomeAmbiguous = false;
   }
 
   private handleRemoteInvalidation(invalidation: SharedLocationStateInvalidation): void {
