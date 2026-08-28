@@ -1,7 +1,7 @@
 # Risk Register
 
 Status: `canonical`
-Last reviewed: 2026-08-27
+Last reviewed: 2026-08-28
 
 ## Critical — silent operational data loss
 
@@ -20,11 +20,47 @@ Required mitigation before broader/commercial production:
 
 Reference: [[18_Production_Incidents_and_Never_Again_Rules]].
 
-## Critical — simultaneous multi-user write contention
+## Critical — proven disjoint-resource whole-location contention
 
-Petalon already has concurrent users. Koversada will be monitored by Vuk/Mark while a worker operates it, and is expected to have multiple worker devices next season.
+**Evidence:** Second Incident, 2026-08-28.
 
-Current whole-`AppData` location revision CAS prevents silent overwrite but can create contention between independent business actions. Long-term mitigation is per-operation idempotency plus per-entity/versioned write boundaries rather than one whole-location replacement document.
+Production telemetry proves Vuk and Vito both began valid unrelated operations from revision 443:
+
+- Vuk — Aquapark wristband-return update;
+- Vito — Set 13 €12 payment.
+
+Vuk's operation was accepted first as revision 444. Vito's whole-location save then returned `conflict`.
+
+The authoritative 443 → 444 diff contains no Set, Bed or financial-transaction change; it contains only the Aquapark change.
+
+Therefore the current whole-`AppData` CAS boundary creates false contention between independent business resources during normal required operation.
+
+Required mitigation:
+
+- move toward immutable business-operation IDs and idempotent server commands;
+- progressively narrow concurrency to the relevant resource/entity;
+- auto-reconcile only where disjointness/safety is proven;
+- retain explicit conflict behavior for genuinely conflicting same-resource intents;
+- test concurrent different-domain operations on real devices.
+
+## Critical — conflict detection can cause whole-app operational lockout
+
+**Evidence:** Second Incident, 2026-08-28.
+
+R2 safely preserved Set 13 and rejected unsafe overwrite, but the conflict state replaced the entire Petalon operational UI.
+
+`Check shared data again` reloads state; it does not reconcile the preserved mutation.
+
+A worker can therefore remain indefinitely unable to perform unrelated work even though only one operation is unresolved.
+
+Required mitigation:
+
+- explicit safe conflict-resolution choices;
+- worker-readable explanation of what is preserved and what conflicts;
+- safe reapply/rebase only when independently proven compatible;
+- deliberate discard/cancel path where product rules allow it;
+- recovery/resume behavior that does not silently lose evidence;
+- no expectation that workers interpret raw JSON.
 
 ## High — false safety reactions to legitimate Realtime
 

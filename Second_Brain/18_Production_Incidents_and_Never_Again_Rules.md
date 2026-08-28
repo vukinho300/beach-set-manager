@@ -1,7 +1,7 @@
 # Production Incidents and Never-Again Rules
 
 Status: `canonical`
-Last reviewed: 2026-08-27
+Last reviewed: 2026-08-28
 
 This note exists so severe production failures become permanent architecture and release rules rather than one-off bug fixes.
 
@@ -43,6 +43,205 @@ The worker must not need to inspect a small sync banner or revision after every 
 
 Do not describe a specific IndexedDB exception as proven. A closed/hung IndexedDB path is a leading hypothesis, but `InvalidStateError`, an IndexedDB hang, every controller update/retry, and the exact lifecycle trigger were not directly observed.
 
+# Second Incident — 2026-08-28
+
+## Operational impact
+
+The Second Incident occurred during real Petalon Production operation after Production Reliability R2 had been merged and deployed.
+
+Vito was operating the sunbed/set round from an Android phone on 5G while Vuk was simultaneously operating Aquapark from an iPhone on 5G.
+
+Vito attempted to record Set 13 after the customer had paid in real life. Beach Set Manager created and durably preserved the local Set 13 payment, but the server rejected the whole-location state write because Vuk had concurrently completed an unrelated Aquapark update from the same base revision.
+
+Vito's application then entered the full-screen `Newer shared data exists` conflict state. The normal Petalon operational interface was unavailable to him. `Check shared data again` reloaded authoritative state but returned to the same unresolved conflict. The recovery-file action preserved the state but, on the affected Android flow, opened a raw JSON/content viewer rather than giving the worker a practical recovery/resume workflow.
+
+Vuk's iPhone remained operational. This was not a global Petalon outage.
+
+## Normal operating workflow
+
+This concurrency is normal required production behavior.
+
+Approximately:
+
+- 08:00–12:00 — Vito works alone;
+- 12:00–16:00 — Vuk and Vito work concurrently;
+- 16:00–20:00 — Vuk works alone.
+
+One worker performs the physical sunbed/set round. On the day of the Second Incident, Vito was performing the sunbed/set round.
+
+While that round is happening, the other worker may operate Aquapark. When the sunbed worker is not on a round, both workers may also interact with Aquapark.
+
+Vuk and Vito were not intentionally editing Set 13 or another numbered Set simultaneously.
+
+The application must therefore support an Aquapark operation and a different Set operation at the same Petalon location without treating them as a business conflict merely because they started from the same whole-location revision.
+
+## Preserved-device evidence
+
+Vito's recovery export is a `preserved-unsaved-app-data` snapshot for Petalon based on server revision 448.
+
+It proves the application created:
+
+- Set 13 — paid;
+- amount — €12;
+- price mode — fixed;
+- transaction/daily-sale ID — `3e1ea3a5-8c83-46d0-b7ff-acbd49c867f5`;
+- local timestamp — `2026-08-28T11:37:10.663Z`.
+
+The same transaction ID exists in the preserved financial transaction data.
+
+Therefore the explanation "perhaps the Set 13 mutation was never created" is contradicted by machine evidence.
+
+The preserved snapshot also contains the earlier Set 18 and Set 16 payments.
+
+## Authoritative server evidence
+
+Immutable `private.location_state_history` proves:
+
+- Set 18 was accepted by Vito at revision 437;
+- Set 16 was accepted by Vito at revision 438;
+- revisions 440 through 448 were accepted writes by Vuk;
+- Set 13 remained free through every accepted revision in that sequence;
+- Set 13 transaction ID `3e1ea3a5-8c83-46d0-b7ff-acbd49c867f5` appears in no accepted Petalon history revision.
+
+Set 13 was therefore preserved locally but never accepted into authoritative server state.
+
+## R2 telemetry evidence
+
+R2 client telemetry provides the exact failing save sequence.
+
+Both devices operated from authoritative revision 443.
+
+Vuk:
+
+- local mutation became visible at approximately `11:37:11.737Z`;
+- repository save started with expected revision 443 at approximately `11:37:11.764Z`;
+- repository save returned `accepted` at approximately `11:37:11.952Z`;
+- that write became authoritative revision 444.
+
+Vito:
+
+- Set 13 local mutation became visible at approximately `11:37:11.874Z`;
+- controller admitted the mutation;
+- local durability was confirmed;
+- repository save started with expected revision 443 at approximately `11:37:11.905Z`;
+- repository save returned `conflict` at approximately `11:37:12.850Z`.
+
+This rules out an Incident-1-style pre-network silent durability failure for Set 13.
+
+## Exact conflicting authoritative change
+
+The authoritative state diff from revision 443 to revision 444 contains:
+
+- no numbered Set change;
+- no Extra Bed change;
+- no financial transaction change;
+- one Aquapark entry change.
+
+The Aquapark change updated one entry's `returnedWristbands` from `[]` to `[8]`.
+
+Therefore the Second Incident root cause is proven:
+
+**a normal Vuk Aquapark operation and Vito Set 13 payment collided solely because the current architecture serializes unrelated Petalon business actions through one whole-location `location_state.revision` compare-and-swap boundary.**
+
+The operations were not business-conflicting intents. They were unrelated resource changes.
+
+## What R2 protected successfully
+
+R2 materially improved the outcome compared with the First Incident.
+
+It:
+
+1. admitted the Set 13 mutation explicitly;
+2. durably preserved it on Vito's device;
+3. reached the repository/server save stage;
+4. detected the stale expected revision;
+5. did not overwrite Vuk's newer authoritative state;
+6. retained the Set 13 payment and exact transaction ID for recovery;
+7. prevented Vito from continuing to create many additional unsafe application mutations;
+8. produced telemetry sufficient to reconstruct the failure accurately.
+
+R2 therefore succeeded as conservative fail-closed containment.
+
+## What R2 failed to provide
+
+R2 did not provide acceptable operational conflict recovery.
+
+One unresolved €12 Set payment replaced the whole Petalon application with a conflict screen.
+
+The current `Check shared data again` action reloads authoritative state. It does not reconcile the preserved local operation. If the preserved local state continues to differ from the server, the user can return to the same conflict screen indefinitely.
+
+The worker therefore had no safe practical route to:
+
+- reconcile the Set 13 operation;
+- discard only that operation deliberately;
+- reapply it against the new authoritative state where safe;
+- or return to unrelated Petalon work.
+
+This turned safe conflict detection into an operational availability failure.
+
+The recovery JSON also proved technically useful but produced poor worker UX on the affected Android flow because the file opened as raw JSON/content.
+
+## Business impact
+
+Set 13 was a real payment whose application mutation was created and preserved but not accepted by the server.
+
+Set 7 was physically paid before the Set 13 application attempt, but current evidence does not prove that a Set 7 application mutation was attempted.
+
+After Vito was locked out, Set 9 and Set 11 were physically paid but could not be entered into Beach Set Manager because the normal application was unavailable.
+
+Do not describe Sets 7, 9 or 11 as server writes that disappeared.
+
+The final physical timing/status of the initially mentioned Set 10 / three-sunbed item remains unresolved and should not be invented.
+
+## Relationship to the First Incident
+
+The First Incident and Second Incident are distinct failure mechanisms.
+
+First Incident:
+
+- Vuk / iPhone Home Screen PWA;
+- roughly twenty apparently accepted operational changes;
+- no corresponding Petalon repository/server writes during the missing interval;
+- exact pre-network client failure stage not proven;
+- R2 did not yet exist.
+
+Second Incident:
+
+- Vito / Android;
+- R2 active;
+- one Set 13 mutation explicitly admitted and durably preserved;
+- repository save definitely attempted;
+- server returned a proven CAS conflict;
+- conflict caused by a concurrent unrelated Aquapark write;
+- R2 prevented overwrite and further unsafe mutation accumulation;
+- worker then became operationally locked out.
+
+Do not describe the incidents as having the same proven root cause.
+
+They do, however, expose different weaknesses of the same whole-location snapshot architecture.
+
+## Step 10 relationship
+
+The Step 10 / Koversada frontend in Draft PR #28 was not deployed to Production during the Second Incident.
+
+The Production client telemetry identifies the running application build as main commit `8f7f332e51e402dbdcba4bc63d029f5ff6c4c042`.
+
+The additive Step 10 database foundation had already been provisioned remotely, but Petalon remained on the existing R2 `location_state` CAS write architecture. The Second Incident's exact conflict is independently explained by two normal R2 Petalon writes racing on revision 443.
+
+Do not attribute the Second Incident to the Draft PR #28 frontend.
+
+## Architecture consequence
+
+The Second Incident satisfies the existing roadmap trigger for promoting Reliability R3 from planned hardening to immediate reliability work.
+
+The current whole-location CAS boundary is no longer merely a theoretical concurrency limitation. Production evidence proves that unrelated normal business actions can conflict solely because they share one location revision.
+
+The next reliability architecture must prevent independent-resource operations from manufacturing whole-location business conflicts while retaining conservative protection for genuinely conflicting same-resource intents.
+
+A narrow pre-R3 conflict-recovery patch may be considered if needed for operational continuity, but it must not normalize unsafe blind whole-state rebasing or overwrite newer authoritative work.
+
+Step 10 frontend rollout should remain paused until the Second Incident corrective write/conflict strategy is reviewed and accepted.
+
 # Never-Again Rules
 
 1. **No silent visible mutation.** A visible operational change must receive explicit admission into the shared write pipeline. Missing/mismatched/paused controller states must not silently return.
@@ -61,10 +260,19 @@ Do not describe a specific IndexedDB exception as proven. A closed/hung IndexedD
 14. **Release testing must reproduce the real round.** Unit tests alone are insufficient for reliability changes.
 15. **The whole-AppData JSONB model is not the final commercial write model.** Real multi-user concurrency and the First Incident are evidence to move toward immutable business operations.
 16. **Owner revenue comparison is a detection layer.** Real revenue is a boss-entered external reference. Workers must not be burdened with reconciliation workflow, and the comparison must not be mistaken for write durability or recovery.
+17. **Disjoint resource actions must not become false business conflicts.** A Set payment and an unrelated Aquapark action must not conflict solely because they share one whole-location revision.
+18. **Conflict detection is not conflict resolution.** Preserving a mutation and showing a conflict is necessary but insufficient; the system needs a safe reconciliation or deliberate-resolution path.
+19. **One preserved conflict must not indefinitely remove unrelated operational capability.** Fail closed against unsafe writes, but design recovery so the worker can safely resolve the affected operation and return to work.
+20. **Concurrency tests must use different domains, not only the same resource.** Release tests must include simultaneous Set/Bed/Sunbed and Aquapark operations from separate devices.
+21. **Recovery UX must be worker-usable.** Machine-readable evidence files are valuable, but a normal worker must not be expected to understand raw JSON in order to recover from an operational incident.
 
-# Preventative Database Step — Reliability R3
+# Immediate Preventative Database Step — Reliability R3
 
-R2 is fail-closed containment for the current architecture. The next major preventative database step should be an **immutable client outbox + idempotent server operation ledger/command boundary**.
+R2 remains the fail-closed containment layer for the current architecture. After the Second Incident's forensic diagnosis, R3 is promoted from future commercial hardening to the immediate reliability track.
+
+Production evidence now proves that one whole-location CAS revision creates false contention between unrelated business resources during the normal two-worker Petalon workflow.
+
+R3 should therefore move operational writes toward an immutable client outbox, idempotent server operation/command boundary and progressively narrower concurrency scopes.
 
 Each real business action should receive one stable `operation_id` and be retried with the same ID after reopen/ambiguous responses. The client should durably preserve a small immutable operation record. The server should accept commands through narrow authenticated functions that derive `auth.uid()`, verify active location membership, validate the business action, enforce unique `operation_id`, and return the already-accepted result when the same operation is retried.
 
@@ -103,10 +311,13 @@ Koversada must be designed as a shared location, not a one-user app. Initially a
 
 # Post-incident release order
 
-1. Keep R2 as the production containment layer and validate it under real concurrent Petalon use.
-2. Step 10 may proceed only without weakening any Never-Again Rule or replacing the R2 write path.
-3. Add the boss-only Real Revenue vs App Revenue comparison on a separate trusted server boundary.
-4. R3 design/development may begin before field validation, but do not replace Production operational writes with R3 until R2 has been observed under realistic concurrent use and the R3 migration has its own staged verification.
-5. Treat R3 immutable operations/idempotency as required before commercial maturity and before high-concurrency next-season use, even if it is deferred during the current internal pilot.
+1. Keep R2 as the Production containment layer while the Second Incident correction is developed.
+2. Record and preserve the Second Incident forensic evidence and Never-Again Rules.
+3. Promote R3 / disjoint-resource conflict correctness to immediate reliability work.
+4. Add a practical safe conflict-resolution/resume path without blind whole-state overwrite.
+5. Verify real concurrent Petalon use with different domains from separate devices.
+6. Re-review and resume Step 10 frontend rollout only after the Second Incident reliability gate passes.
+7. Keep Layer 5 owner revenue comparison as a detection/audit control, not a durability or recovery mechanism.
+8. Treat R3 immutable operations/idempotency as required before commercial maturity and high-concurrency next-season use.
 
-Future severe incidents should be named `Second Incident`, `Third Incident`, etc. Each record must separate proven facts from hypotheses and update these permanent rules.
+Future severe incidents should be named `Third Incident`, `Fourth Incident`, etc. Each record must separate proven facts from hypotheses and update these permanent rules.

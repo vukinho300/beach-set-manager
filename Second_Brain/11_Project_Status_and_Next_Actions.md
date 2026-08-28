@@ -1,95 +1,98 @@
 # Project Status and Next Actions
 
 Status: `canonical`
-Last reviewed: 2026-08-27
+Last reviewed: 2026-08-28
 
 ## Current state
 
-Shared Petalon v1, Production Reliability R1 and Step 9 are merged. Canonical roles remain:
+Shared Petalon v1, Production Reliability R1, Step 9, Production Reliability R2 and the Layer 5 owner-revenue architecture decision are merged.
+
+Current main checkpoint:
+
+`8f7f332e51e402dbdcba4bc63d029f5ff6c4c042`
+
+Canonical Petalon roles:
 
 - Vuk — `PLATFORM_OWNER` — Platform Admin;
 - Mark — `LOCATION_ADMIN` — Location Owner;
 - Vito — `WORKER` — Worker.
 
-Step 10 / Koversada was initiated but is **paused**. At the time of the First Incident no Step 10 frontend/schema/location/membership changes had reached Production; only an isolated Koversada Auth user had been created.
+R2 is running in Production.
 
-## First Incident — highest-priority reliability evidence
+## Second Incident — current highest-priority reliability evidence
 
-On 2026-08-27, during a real Petalon round on Vuk's installed iPhone Home Screen PWA, roughly twenty visible operational entries never reached Supabase. Vito discovered the discrepancy from Android roughly 20–30 minutes later while working concurrently.
+On 2026-08-28, during normal concurrent Petalon operation, Vito attempted to record Set 13 while Vuk performed unrelated Aquapark work.
 
-Server evidence proves the missing work was not accepted and later overwritten. The exact iOS/browser exception is not proven. The incident exposed a broader architectural problem: the old UI could remain interactive while its pre-network durability/write pipeline was unhealthy.
+R2 successfully admitted and durably preserved Vito's €12 Set 13 mutation and sent the repository request.
 
-Canonical incident record and permanent rules: [[18_Production_Incidents_and_Never_Again_Rules]].
+Both Vuk and Vito attempted writes based on revision 443.
 
-## Production Reliability R2 — Draft PR #25
+Vuk's unrelated Aquapark wristband-return change was accepted first and became revision 444.
 
-R2 is the immediate release gate. Corrected reviewed head currently referenced by the Second Brain: `cfc465fe34f177accb7d605153fd8a1f80effbce`.
+Vito's Set 13 whole-location save then returned an explicit CAS conflict because it still expected revision 443.
 
-R2 introduces:
+Immutable server-state comparison proves revision 443 → 444 changed no Set, Bed or financial transaction; it changed only one Aquapark entry's returned-wristband state.
 
-- explicit shared-write admission instead of silent controller returns;
-- bounded pending-store and IndexedDB operations;
-- distinct device-safety state (`safe`, `securing`, `durable`, `blocked`);
-- hard fail-closed UX when a visible mutation cannot be durably secured;
-- blocking of additional operational mutations while the first unsafe mutation is unresolved;
-- in-memory emergency recovery export;
-- user/location-scoped localStorage + IndexedDB recovery paths;
-- privacy-safe client write-stage telemetry via a narrow membership-checked RPC;
-- preservation of R1 CAS, conservative conflict and ambiguous-attempt recovery;
-- explicit distinction between a normal incoming authoritative Realtime snapshot and genuine unadmitted local divergence.
+Therefore whole-location CAS contention between unrelated resources is now a proven Production defect under the intended Vuk/Vito workflow.
 
-R2 is **not approved for Production yet**. Unit/build checks are not sufficient after the First Incident.
+Canonical record:
 
-## Required R2 release verification
+[[18_Production_Incidents_and_Never_Again_Rules]]
 
-Before merge/deploy:
+## R2 status after field evidence
 
-1. affected iPhone Home Screen PWA Preview test;
-2. at least ten entry → background/close → reopen cycles;
-3. lock/unlock and app switching;
-4. 15–20 reversible walking-style operations;
-5. concurrent second-device Realtime updates from Vito/another account;
-6. proof incoming authoritative updates do not create false STOP/locking;
-7. controlled durability-hang test using the Preview-only seam;
-8. proof hard STOP blocks the next operational action;
-9. proof emergency recovery export contains the exact visible unsafe state.
+R2 remains valuable Production containment.
 
-## Next preventative database milestone — Reliability R3
+It:
 
-The First Incident is evidence that the whole-AppData snapshot/revision model should not be considered the final commercial write architecture.
+- explicitly admitted Set 13;
+- durably preserved the mutation;
+- reached repository save;
+- detected the stale revision;
+- prevented unsafe overwrite;
+- preserved forensic evidence;
+- blocked further unsafe mutations.
 
-After R2 is proven, design an immutable client operation/outbox and idempotent server-command model:
+However, current R2 conflict handling is operationally incomplete.
 
-- one stable UUID `operation_id` per business action;
-- durable local operation record retained across retries/reopen;
-- append-only protected server operation ledger;
-- narrow authenticated commands/RPCs that derive `auth.uid()` and verify active location membership;
-- duplicate retry of the same `operation_id` returns the previous result rather than creating another transaction;
-- revenue-affecting operations create immutable/voidable financial ledger entries atomically;
-- progressively move contention from one whole-location revision to the relevant entity/version so independent workers can operate concurrently.
+The conflict state replaces the whole operational application and `Check shared data again` only reloads authoritative state. It does not reconcile the preserved operation.
 
-See [[18_Production_Incidents_and_Never_Again_Rules]].
+One unrelated-resource CAS collision therefore locked Vito out of normal Petalon work.
 
-## Koversada / multi-location requirement after reliability gate
+## Reliability R3 — immediate priority
 
-Koversada is the real second location and should use the same application/database deployment.
+Incident 2 satisfies the existing roadmap trigger for promoting R3 after forensic diagnosis.
 
-Initial operating model:
+R3 is now the next reliability architecture priority:
 
-- Koversada Worker A — Koversada `WORKER`, Aquapark-only interface;
-- Vuk — access to Petalon and Koversada; primarily operates Petalon and monitors/manages Koversada;
-- Mark — access to both locations; monitors/manages both;
-- Vito — Petalon only.
+- stable immutable `operation_id` per business action;
+- durable client outbox across reopen/retry;
+- authenticated idempotent server commands;
+- append-only accepted-operation history;
+- immutable/voidable financial ledger;
+- progressively per-resource/per-entity concurrency boundaries;
+- safe treatment of disjoint concurrent operations.
 
-Next season Koversada is expected to have two workers operating simultaneously. They should be separate Auth users with identical Koversada Worker capability rather than sharing one account. Multi-user Realtime and concurrent writes are therefore core requirements, not edge cases.
+A narrower conflict-recovery patch may be considered before full R3 if needed, but must not use blind whole-state overwrite/rebase.
+
+## Step 10 / Koversada
+
+Draft PR #28 remains open and unmerged.
+
+Its frontend was not in Production during Incident 2.
+
+The reviewed additive Step 10 database foundation has been provisioned remotely, including the Koversada location/memberships and owner Real Revenue boundary, but Production frontend behavior remains the main/R2 Petalon application.
+
+Do not merge/deploy the Step 10 frontend until the Second Incident corrective write/conflict strategy is accepted and verified.
+
+KNO remains separate and untouched.
 
 ## Immediate order
 
-1. Finish R2 correction review.
-2. Pass affected-iPhone/concurrent-device Preview verification.
-3. Merge/deploy R2 only after manual PASS.
-4. Observe realistic production behavior.
-5. Design/implement the R3 operation/idempotency foundation at the appropriate point before commercial maturity and high-concurrency Koversada use.
-6. Resume Step 10 only with the First Incident Never-Again Rules treated as release invariants.
-
-KNO remains separate and untouched.
+1. Record the Second Incident and forensic diagnosis in the Second Brain.
+2. Decide the corrective architecture: immediate R3 foundation and whether a narrow pre-R3 conflict-resolution patch is also required.
+3. Implement and independently review the selected reliability correction.
+4. Test real concurrent disjoint-resource operation: Vuk Aquapark + Vito Sets/Beds/Sunbeds.
+5. Verify recovery/resume behavior after deliberately induced conflicts.
+6. Only after that reliability gate, re-review/rebase PR #28 as necessary and resume Step 10 frontend rollout.
+7. Keep the boss-only Real Revenue vs App Revenue feature as a detection/audit layer, not a replacement for write correctness.

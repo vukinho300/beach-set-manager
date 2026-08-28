@@ -1,8 +1,8 @@
 # Beach Management Platform — Second Brain
 
 Status: `canonical`
-Last reviewed: 2026-08-27
-Repository implementation checkpoint reviewed: `cfc465fe34f177accb7d605153fd8a1f80effbce` (R2 / PR #25 corrected head; pending affected-iPhone release verification)
+Last reviewed: 2026-08-28
+Repository implementation checkpoint reviewed: `8f7f332e51e402dbdcba4bc63d029f5ff6c4c042`
 
 This vault is the human-readable control center for `beach-set-manager` as it evolves from a local-only Petalon PWA into a secure shared operational application.
 
@@ -12,19 +12,20 @@ This vault is the human-readable control center for `beach-set-manager` as it ev
 
 ## Current phase
 
-**Shared Petalon v1, Production Reliability R1 and Step 9 are merged. Step 10 / Koversada is paused because the 2026-08-27 First Incident proved the write path required another reliability gate. Production Reliability R2 is in Draft PR #25 and is not yet approved for Production.**
+**Production Reliability R2 is merged and running. The Second Incident on 2026-08-28 has now been forensically diagnosed as a whole-location CAS conflict between unrelated normal Petalon operations. Reliability R3 / conflict-correctness is the immediate engineering priority.**
 
-Canonical Petalon roles:
+Vuk and Vito were using Petalon concurrently as intended:
 
-- `PLATFORM_OWNER` — Vuk; product label **Platform Admin**.
-- `LOCATION_ADMIN` — Mark; product label **Location Owner**.
-- `WORKER` — Vito; product label **Worker**.
+- Vuk changed Aquapark;
+- Vito recorded Set 13.
 
-Production Reliability R1 remains baseline architecture: background authoritative convergence must not remount/reset working UI; tab/scroll continuity is device UI state; unconfirmed work receives user/location-scoped recovery protection; conflicts remain conservative.
+Both writes began from revision 443. Vuk's unrelated Aquapark change became revision 444; Vito's Set 13 save then returned a CAS conflict.
 
-The **First Incident** is now a permanent architecture reference. During a real iPhone Home Screen PWA round, roughly twenty visible operational entries never reached Supabase. The server revision chain proves the work was not accepted and later overwritten. The exact client exception is unproven. See [[18_Production_Incidents_and_Never_Again_Rules]].
+R2 preserved Set 13 and prevented unsafe overwrite, but current conflict UX made the entire operational application unavailable to Vito.
 
-R2 adds fail-closed write safety, bounded device-durability operations, explicit controller admission, privacy-safe sync telemetry and hard-stop recovery behavior. The corrected PR #25 also distinguishes incoming authoritative Realtime convergence from genuine unadmitted local divergence. R2 still requires real affected-iPhone Preview testing before merge/deploy.
+See [[18_Production_Incidents_and_Never_Again_Rules]].
+
+Draft PR #28 contains Step 10 / Koversada frontend work. It remains unmerged and is not the Production frontend. Its additive database foundation has been provisioned remotely, but Step 10 frontend rollout remains behind the Second Incident reliability gate.
 
 KNO remains separate and untouched.
 
@@ -62,10 +63,12 @@ KNO remains separate and untouched.
 
 ## Immediate objective
 
-1. Finish R2 / PR #25 review and affected-iPhone Preview verification.
-2. Deploy R2 only after realistic Home Screen PWA close/reopen, concurrent-worker, walking-style and forced-failure tests pass.
-3. Design **Reliability R3: immutable client operations/outbox + idempotent server operation ledger/commands** as the next preventative database architecture.
-4. Resume Step 10 / Koversada only without weakening First Incident Never-Again Rules.
+1. Finalize the Second Incident record and accepted corrective architecture.
+2. Promote Reliability R3 / disjoint-resource conflict correctness to immediate implementation work.
+3. Ensure a normal Aquapark operation and unrelated Set/Bed/Sunbed operation can proceed concurrently without whole-location false conflicts.
+4. Add a safe worker conflict-resolution/resume path without blind overwrite.
+5. Field-test the correction with Vuk and Vito concurrently.
+6. Re-review and resume Step 10 / Koversada only after that reliability gate passes.
 
 Koversada is a real shared second location: its worker(s) operate it while Vuk and Mark may monitor concurrently; future architecture must support multiple independent Koversada worker accounts/devices rather than one shared worker identity.
 

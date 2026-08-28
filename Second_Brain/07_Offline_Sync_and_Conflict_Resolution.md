@@ -1,7 +1,7 @@
 # Offline Sync and Conflict Resolution
 
 Status: `prototype_decision`
-Last reviewed: 2026-08-27
+Last reviewed: 2026-08-28
 
 ## Goal
 
@@ -25,6 +25,28 @@ R1 was still insufficient. During a real round on Vuk's installed iPhone Home Sc
 
 This produced the permanent rules in [[18_Production_Incidents_and_Never_Again_Rules]] and the R2/R3 reliability track.
 
+### Second Incident — 2026-08-28
+
+R2 field use exposed a different failure class from the First Incident.
+
+Vuk and Vito concurrently performed unrelated operations from Petalon revision 443.
+
+Vuk's Aquapark update was accepted first as revision 444.
+
+Vito's Set 13 €12 operation had already been:
+
+- made visible;
+- admitted;
+- durably preserved;
+- forwarded to the repository;
+- sent with expected revision 443.
+
+The repository returned an explicit `conflict`.
+
+The 443 → 444 server-state diff proves the winning Vuk write changed only Aquapark returned-wristband state and did not modify any Set, Bed or financial transaction.
+
+This proves whole-location CAS is too coarse for normal independent-resource concurrency.
+
 ## R1 — merged baseline
 
 R1 provides:
@@ -41,40 +63,56 @@ R1 provides:
 
 R1 does not make a device-only pending mutation server-confirmed.
 
-## R2 — fail-closed containment, PR #25 pending release verification
+## R2 — merged Production containment
 
-R2 addresses the First Incident class without yet replacing the whole-AppData model:
+R2 is deployed and active.
 
-- explicit mutation-admission results instead of silent controller returns;
+It provides:
+
+- explicit mutation-admission results;
 - bounded pending-store/IndexedDB operations;
 - separate `safe` / `securing` / `durable` / `blocked` device-safety state;
 - localStorage + IndexedDB recovery paths;
-- hard STOP if the current visible mutation cannot be durably secured;
-- further operational mutations blocked while unsafe;
-- emergency recovery export from the visible in-memory AppData;
-- privacy-safe client write-stage telemetry;
-- normal network failure can continue only when the local mutation is durably preserved;
-- incoming authoritative Realtime is explicitly distinguished from genuine local divergence so another worker's save does not create a false STOP.
+- hard STOP when visible work cannot be durably secured;
+- prevention of further unsafe mutations;
+- emergency preserved-state export;
+- privacy-safe client pipeline telemetry;
+- conservative expected-revision CAS protection;
+- correct distinction between incoming authoritative Realtime and genuine local divergence.
 
-R2 is not Production-approved until the affected iPhone Home Screen PWA passes realistic lifecycle, concurrent-device, walking-style and controlled-failure Preview tests.
+The Second Incident proves that this containment works materially better than the pre-R2 system: Set 13 was admitted, durable, transmitted, conflict-detected and preserved.
 
-## Current conflict categories
+R2 does not solve the granularity of whole-location CAS and does not currently provide a practical conflict-reconciliation/resume workflow.
 
-### Safe accepted/ambiguous retry
+## Current conflict model after the Second Incident
 
-If the server proves it already contains the exact attempted state, treat it as accepted rather than duplicating it.
+### Genuine same-resource conflict
 
-### Narrow compatible Beach recovery
+If two users attempt incompatible changes to the same exclusive resource, preserve both intents/evidence and require explicit deterministic resolution.
 
-Only for an unattempted pending whole-AppData snapshot where the non-set state is unchanged and every locally changed set is either unchanged on the server or already equal to the desired value.
+### Proven disjoint-resource conflict
 
-### Business/financial conflict
+A stale whole-location revision is not sufficient evidence that the underlying business actions conflict.
 
-Do not force overwrite. Preserve pending work and require deliberate recovery. Aquapark, reservations, sales, transactions and other financial/business changes are not broadly auto-rebased.
+The Second Incident proves that unrelated Aquapark and Set operations can race on the same revision.
 
-## R3 — planned operation/outbox architecture
+Future conflict logic must distinguish a server-revision conflict from an actual business-resource conflict.
 
-The First Incident plus planned multi-worker Koversada operation are evidence that the whole-AppData snapshot buffer should not remain the final commercial write architecture.
+Safe automatic reconciliation/reapply may be permitted only when the system can prove the remote and local operations are disjoint and all business invariants remain valid.
+
+### Ambiguous operation
+
+Never blindly replay an operation when the server outcome is unknown. Stable operation IDs/idempotent commands are the R3 solution.
+
+### Operational recovery
+
+Preserving work without a path to resolve it is incomplete.
+
+The worker must be able to understand the affected operation, preserve evidence, resolve/reapply/discard it according to product rules and return to unrelated work without whole-app indefinite lockout.
+
+## R3 — immediate operation/outbox architecture
+
+The First Incident, the Second Incident and planned multi-worker Koversada operation are evidence that the whole-AppData snapshot buffer should not remain the final commercial write architecture.
 
 R3 should move business actions toward immutable commands:
 
