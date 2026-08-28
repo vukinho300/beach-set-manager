@@ -1304,4 +1304,388 @@ describe('SharedStateController', () => {
       deviceSafety: 'safe',
     });
   });
+
+  it('does not invoke known-conflict reconciliation without a current server state', async () => {
+    const repository = new FakeRepository();
+    repository.saveHandler = async () => ({ status: 'conflict', current: null });
+    const reconcileKnownRejectedConflict = vi.fn(() => ({
+      status: 'rebased' as const,
+      state: { marker: 'must-not-run', value: 99 },
+    }));
+    const { controller } = createController(repository, { reconcileKnownRejectedConflict });
+    await controller.reload();
+
+    controller.update({ marker: 'local', value: 2 });
+    await flushPromises();
+
+    expect(reconcileKnownRejectedConflict).not.toHaveBeenCalled();
+    expect(repository.save).toHaveBeenCalledTimes(1);
+    expect(controller.getSnapshot()).toMatchObject({ status: 'conflict', current: null });
+  });
+
+  it('does not auto-rebase across more than one accepted remote revision', async () => {
+    const repository = new FakeRepository();
+    repository.saveHandler = async () => ({
+      status: 'conflict',
+      current: sharedState({ marker: 'remote', value: 8 }, 6),
+    });
+    const reconcileKnownRejectedConflict = vi.fn(() => ({
+      status: 'rebased' as const,
+      state: { marker: 'rebased', value: 10 },
+    }));
+    const { controller } = createController(repository, { reconcileKnownRejectedConflict });
+    await controller.reload();
+
+    controller.update({ marker: 'local', value: 2 });
+    await flushPromises();
+
+    expect(reconcileKnownRejectedConflict).not.toHaveBeenCalled();
+    expect(repository.save).toHaveBeenCalledTimes(1);
+    expect(controller.getSnapshot()).toMatchObject({ status: 'conflict' });
+  });
+
+  it('fails closed when raw conflict data does not pass known-conflict validation', async () => {
+    const repository = new FakeRepository();
+    repository.saveHandler = async () => ({
+      status: 'conflict',
+      current: sharedState({ marker: 'remote', value: 8 }, 5),
+    });
+    const reconcileKnownRejectedConflict = vi.fn(() => ({
+      status: 'rebased' as const,
+      state: { marker: 'must-not-run', value: 99 },
+    }));
+    const { controller } = createController(repository, {
+      reconcileKnownRejectedConflict,
+      validateKnownConflictCurrent: () => false,
+    });
+    await controller.reload();
+
+    controller.update({ marker: 'local', value: 2 });
+    await flushPromises();
+
+    expect(reconcileKnownRejectedConflict).not.toHaveBeenCalled();
+    expect(repository.save).toHaveBeenCalledTimes(1);
+    expect(controller.getSnapshot()).toMatchObject({
+      status: 'unavailable', phase: 'save', pendingPreserved: true,
+    });
+  });
+
+  it('falls back to preserved conflict if the optional reconciler throws', async () => {
+    const repository = new FakeRepository();
+    repository.saveHandler = async () => ({
+      status: 'conflict',
+      current: sharedState({ marker: 'remote', value: 8 }, 5),
+    });
+    const { controller } = createController(repository, {
+      reconcileKnownRejectedConflict: () => { throw new Error('classifier failed'); },
+    });
+    await controller.reload();
+
+    controller.update({ marker: 'local', value: 2 });
+    await flushPromises();
+
+    expect(repository.save).toHaveBeenCalledTimes(1);
+    expect(controller.getSnapshot()).toMatchObject({
+      status: 'conflict', local: { marker: 'local', value: 2 }, pendingPreserved: true,
+    });
+  });
+
+  it('fails closed when rebased pending durability rejects and sends no retry', async () => {
+    let pendingSaveCount = 0;
+    const pendingStore: PendingSharedStateStore<TestData> = {
+      load: async () => null,
+      save: async () => {
+        pendingSaveCount += 1;
+        if (pendingSaveCount === 3) throw new Error('rebase storage failed');
+      },
+      remove: async () => undefined,
+    };
+    const repository = new FakeRepository();
+    repository.saveHandler = async () => ({
+      status: 'conflict',
+      current: sharedState({ marker: 'remote', value: 8 }, 5),
+    });
+    const { controller } = createController(repository, {
+      pendingStore,
+      reconcileKnownRejectedConflict: ({ desiredState, currentState }) => ({
+        status: 'rebased',
+        state: { marker: desiredState.marker, value: desiredState.value + currentState.value },
+      }),
+    });
+    await controller.reload();
+
+    controller.update({ marker: 'local', value: 2 });
+    await flushPromises();
+
+    expect(pendingSaveCount).toBe(3);
+    expect(repository.save).toHaveBeenCalledTimes(1);
+    expect(controller.getSnapshot()).toMatchObject({
+      status: 'ready',
+      data: { marker: 'local', value: 10 },
+      syncStatus: 'pending',
+      deviceSafety: 'blocked',
+    });
+    expect(controller.update({ marker: 'must-not-enter', value: 11 })).toEqual({
+      status: 'rejected',
+      reason: 'safety_blocked',
+    });
+  });
+
+  it('times out rebased pending durability and sends no retry', async () => {
+    vi.useFakeTimers();
+    try {
+      let pendingSaveCount = 0;
+      const pendingStore: PendingSharedStateStore<TestData> = {
+        load: async () => null,
+        save: async () => {
+          pendingSaveCount += 1;
+          if (pendingSaveCount === 3) await new Promise<void>(() => undefined);
+        },
+        remove: async () => undefined,
+      };
+      const repository = new FakeRepository();
+      repository.saveHandler = async () => ({
+        status: 'conflict',
+        current: sharedState({ marker: 'remote', value: 8 }, 5),
+      });
+      const { controller } = createController(repository, {
+        pendingStore,
+        reconcileKnownRejectedConflict: ({ desiredState, currentState }) => ({
+          status: 'rebased',
+          state: { marker: desiredState.marker, value: desiredState.value + currentState.value },
+        }),
+      });
+      await controller.reload();
+
+      controller.update({ marker: 'local', value: 2 });
+      await flushPromises();
+      expect(controller.getSnapshot()).toMatchObject({
+        status: 'ready',
+        data: { marker: 'local', value: 10 },
+        deviceSafety: 'securing',
+        syncMessage: 'Newer shared work found — safely combining changes...',
+      });
+      expect(controller.update({ marker: 'must-wait', value: 11 })).toEqual({
+        status: 'rejected',
+        reason: 'safety_securing',
+      });
+      await vi.advanceTimersByTimeAsync(2_501);
+      await flushPromises();
+
+      expect(pendingSaveCount).toBe(3);
+      expect(repository.save).toHaveBeenCalledTimes(1);
+      expect(controller.getSnapshot()).toMatchObject({
+        status: 'ready',
+        data: { marker: 'local', value: 10 },
+        deviceSafety: 'blocked',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('resumes a durably rebased pending chain from its new base after restart', async () => {
+    const pendingStore = new FakePendingStore<TestData>();
+    const remote = { marker: 'remote', value: 8 };
+    const rebased = { marker: 'local', value: 10 };
+    await pendingStore.save({
+      userId: 'user-a',
+      locationId: LOCATION_ID,
+      baseRevision: 5,
+      baseState: remote,
+      desiredState: rebased,
+      automaticRebaseCount: 1,
+      createdAt: '2026-08-28T10:00:00.000Z',
+      updatedAt: '2026-08-28T10:00:01.000Z',
+    });
+    const repository = new FakeRepository();
+    repository.loadHandler = async () => ({ status: 'found', value: sharedState(remote, 5) });
+    const reconcileKnownRejectedConflict = vi.fn(() => ({
+      status: 'rebased' as const,
+      state: { marker: 'must-not-rebase-again', value: 99 },
+    }));
+    const { controller } = createController(repository, {
+      pendingStore,
+      reconcileKnownRejectedConflict,
+    });
+
+    await controller.reload();
+    await flushPromises();
+
+    expect(repository.save).toHaveBeenCalledWith(LOCATION_ID, 5, rebased);
+    expect(reconcileKnownRejectedConflict).not.toHaveBeenCalled();
+    expect(controller.getSnapshot()).toMatchObject({
+      status: 'ready', revision: 6, data: rebased, syncStatus: 'saved',
+    });
+  });
+
+  it('never treats an ambiguous request outcome as a known rejected conflict', async () => {
+    const scheduled: Array<() => void> = [];
+    const repository = new FakeRepository();
+    repository.saveHandler = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('response lost'))
+      .mockResolvedValueOnce({
+        status: 'conflict',
+        current: sharedState({ marker: 'remote', value: 8 }, 5),
+      });
+    const reconcileKnownRejectedConflict = vi.fn(() => ({
+      status: 'rebased' as const,
+      state: { marker: 'unsafe-rebase', value: 99 },
+    }));
+    const { controller } = createController(repository, {
+      reconcileKnownRejectedConflict,
+      scheduleRetry: (callback) => {
+        scheduled.push(callback);
+        return () => undefined;
+      },
+    });
+    await controller.reload();
+    controller.update({ marker: 'local', value: 2 });
+    await flushPromises();
+
+    scheduled.shift()?.();
+    await flushPromises();
+
+    expect(repository.save).toHaveBeenCalledTimes(2);
+    expect(reconcileKnownRejectedConflict).not.toHaveBeenCalled();
+    expect(controller.getSnapshot()).toMatchObject({ status: 'conflict' });
+  });
+
+  it('allows only one automatic rebase in a pending mutation chain', async () => {
+    const repository = new FakeRepository();
+    repository.saveHandler = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: 'conflict',
+        current: sharedState({ marker: 'remote-one', value: 8 }, 5),
+      })
+      .mockResolvedValueOnce({
+        status: 'conflict',
+        current: sharedState({ marker: 'remote-two', value: 9 }, 6),
+      });
+    const reconcileKnownRejectedConflict = vi.fn(({ desiredState, currentState }) => ({
+      status: 'rebased' as const,
+      state: { marker: desiredState.marker, value: desiredState.value + currentState.value },
+    }));
+    const { controller } = createController(repository, { reconcileKnownRejectedConflict });
+    await controller.reload();
+
+    controller.update({ marker: 'local', value: 2 });
+    await flushPromises();
+
+    expect(repository.save).toHaveBeenCalledTimes(2);
+    expect(reconcileKnownRejectedConflict).toHaveBeenCalledTimes(1);
+    expect(controller.getSnapshot()).toMatchObject({ status: 'conflict' });
+  });
+
+  it('rebases the latest coalesced desired state only after it is durably aligned', async () => {
+    const firstResult = deferred<SaveSharedLocationStateResult<TestData>>();
+    const repository = new FakeRepository();
+    repository.saveHandler = vi
+      .fn()
+      .mockImplementationOnce(() => firstResult.promise)
+      .mockImplementationOnce(async (_locationId, expectedRevision, nextState) => ({
+        status: 'accepted' as const,
+        value: sharedState(nextState, expectedRevision + 1),
+      }));
+    const reconcileKnownRejectedConflict = vi.fn(({ desiredState, currentState }) => ({
+      status: 'rebased' as const,
+      state: { marker: desiredState.marker, value: desiredState.value + currentState.value },
+    }));
+    const { controller } = createController(repository, { reconcileKnownRejectedConflict });
+    await controller.reload();
+
+    controller.update({ marker: 'first-local', value: 2 });
+    await flushPromises();
+    controller.update({ marker: 'latest-local', value: 3 });
+    await flushPromises();
+    firstResult.resolve({
+      status: 'conflict',
+      current: sharedState({ marker: 'remote', value: 8 }, 5),
+    });
+    await flushPromises();
+
+    expect(reconcileKnownRejectedConflict).toHaveBeenCalledWith(expect.objectContaining({
+      desiredState: { marker: 'latest-local', value: 3 },
+    }));
+    expect(repository.save).toHaveBeenNthCalledWith(
+      2,
+      LOCATION_ID,
+      5,
+      { marker: 'latest-local', value: 11 },
+    );
+    expect(controller.getSnapshot()).toMatchObject({
+      status: 'ready', revision: 6, data: { marker: 'latest-local', value: 11 },
+    });
+  });
+
+  it('preserves conflict when a newer coalesced desired state is not yet durably aligned', async () => {
+    const firstResult = deferred<SaveSharedLocationStateResult<TestData>>();
+    const latestPersistence = deferred<void>();
+    let pendingSaveCount = 0;
+    const pendingStore: PendingSharedStateStore<TestData> = {
+      load: async () => null,
+      save: async () => {
+        pendingSaveCount += 1;
+        if (pendingSaveCount === 3) await latestPersistence.promise;
+      },
+      remove: async () => undefined,
+    };
+    const repository = new FakeRepository();
+    repository.saveHandler = () => firstResult.promise;
+    const reconcileKnownRejectedConflict = vi.fn(() => ({
+      status: 'rebased' as const,
+      state: { marker: 'must-not-run', value: 99 },
+    }));
+    const { controller } = createController(repository, {
+      pendingStore,
+      reconcileKnownRejectedConflict,
+    });
+    await controller.reload();
+
+    controller.update({ marker: 'first-local', value: 2 });
+    await flushPromises();
+    controller.update({ marker: 'latest-local', value: 3 });
+    await flushPromises();
+    firstResult.resolve({
+      status: 'conflict',
+      current: sharedState({ marker: 'remote', value: 8 }, 5),
+    });
+    await flushPromises();
+
+    expect(reconcileKnownRejectedConflict).not.toHaveBeenCalled();
+    expect(controller.getSnapshot()).toMatchObject({
+      status: 'conflict', local: { marker: 'latest-local', value: 3 },
+    });
+
+    latestPersistence.resolve();
+    await flushPromises();
+    expect(repository.save).toHaveBeenCalledTimes(1);
+    expect(controller.getSnapshot()).toMatchObject({
+      status: 'conflict', local: { marker: 'latest-local', value: 3 },
+    });
+  });
+
+  it('rejects invalid automatic rebase counters in recovered pending records', async () => {
+    const pendingStore = new FakePendingStore<TestData>();
+    await pendingStore.save({
+      userId: 'user-a',
+      locationId: LOCATION_ID,
+      baseRevision: 4,
+      baseState: { marker: 'server', value: 1 },
+      desiredState: { marker: 'local', value: 2 },
+      automaticRebaseCount: 2,
+      createdAt: '2026-08-28T10:00:00.000Z',
+      updatedAt: '2026-08-28T10:00:01.000Z',
+    } as unknown as PendingSharedStateRecord<TestData>);
+    const { controller, repository } = createController(new FakeRepository(), { pendingStore });
+
+    await controller.reload();
+
+    expect(repository.save).not.toHaveBeenCalled();
+    expect(controller.getSnapshot()).toMatchObject({
+      status: 'unavailable', phase: 'load', pendingPreserved: true,
+    });
+  });
 });

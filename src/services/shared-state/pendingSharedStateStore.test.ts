@@ -30,6 +30,20 @@ function unavailableStore(): PendingSharedStateStore<TestData> {
 }
 
 describe('mirrored pending shared-state storage', () => {
+  it('round-trips the backward-compatible automatic rebase counter', async () => {
+    const fallback = createInMemoryPendingSharedStateStore<TestData>();
+    const store = createMirroredPendingSharedStateStore(unavailableStore(), fallback);
+    const rebasedRecord: PendingSharedStateRecord<TestData> = {
+      ...record,
+      baseRevision: 5,
+      automaticRebaseCount: 1,
+    };
+
+    await store.save(rebasedRecord);
+
+    await expect(store.load('user-a', 'location-a')).resolves.toEqual(rebasedRecord);
+  });
+
   it('preserves and loads pending work through the fallback when IndexedDB fails', async () => {
     const fallback = createInMemoryPendingSharedStateStore<TestData>();
     const store = createMirroredPendingSharedStateStore(unavailableStore(), fallback);
