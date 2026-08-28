@@ -1,84 +1,139 @@
 # Development Workflow and Deployment
 
-Status: `draft`
+Status: `canonical`
+Last reviewed: 2026-08-28
 
-Development and production must use separate data environments. Preview deployments must not use production data. Database schema changes should be captured as repository migrations. Update the current local-only README and deployment documentation when the shared backend is actually introduced.
+Beach Set Manager is a live Supabase-backed PWA. Petalon contains real Production operational data. Repository work must start from verified current state and preserve both user work and Production evidence.
+
+## Repository front door
+
+Root `AGENTS.md` is the concise operating guide for coding agents. Before material work, read it, [[00_HOME]], [[11_Project_Status_and_Next_Actions]] and the relevant architecture/reliability notes.
+
+The repository, running code, tests, migrations and verified database remain technical truth. The Second Brain records accepted architecture, decisions and project memory.
 
 ## Terminal-first Codex workflow
 
-Codex normally runs from the local repository checkout in the terminal. It may inspect files, run builds/tests, create a focused feature branch, commit, push and open a PR when the required local CLI authentication is already available.
+Codex normally works from the local repository checkout:
 
-Do not give Codex plaintext passwords or privileged access tokens in prompts. Authenticate external CLIs locally using their supported interactive login flows.
+1. inspect `git status`, current branch and worktrees;
+2. fetch and verify current `origin/main`;
+3. preserve unrelated local changes;
+4. use a clean focused worktree/branch when the existing checkout is dirty;
+5. implement only the approved scope;
+6. run relevant verification and inspect the full diff;
+7. commit/push and open one Draft PR;
+8. do not merge or deploy Production automatically.
 
-Preferred local access setup:
+Normal application verification:
 
-### Git/GitHub
+```powershell
+npm test
+npm run build
+git diff --check
+```
 
-- the repository is already available because Codex runs inside the local clone;
-- GitHub authentication is needed only for remote actions such as fetch/push/PR work;
-- verify with `git remote -v` and the locally installed GitHub/Git credential flow;
-- if GitHub remote authentication is blocked, Vuk should perform the short login/approval step rather than having Codex retry indefinitely.
+Documentation-only work may omit tests/build when no executable/configuration file changed, but must still run `git diff --check` and inspect the complete diff.
 
-### Supabase
+## Git and GitHub
 
-When a Beach Set Manager Supabase project exists and the current implementation step actually needs remote database access:
+- Verify repository/remotes before remote actions.
+- Use supported local Git/GitHub authentication.
+- Keep commits focused and do not incorporate dirty user state.
+- Prefer a Draft PR for independent review.
+- If authentication is blocked, use the manual handoff rule rather than repeatedly retrying.
 
-1. install/use the project-scoped Supabase CLI version selected for the repository;
-2. Vuk performs `supabase login` / `npx supabase login` interactively;
-3. link from the repository root with `supabase link --project-ref <project-ref>`;
-4. verify the linked project before any destructive or remote schema command;
-5. keep access tokens and database passwords out of prompts, committed files and the Second Brain.
+## Supabase
 
-Schema changes must remain represented as repository migrations even when Codex uses the linked remote project for verification.
+Beach Set Manager Supabase project:
 
-### Vercel
+`uonovdnxfjqfjkhopxwg`
 
-Vercel CLI access is not required for the first Supabase-foundation step. When deployment configuration, preview verification or environment variables actually need Vercel access:
+KNO is unrelated and must never be touched:
 
-1. Vuk performs `vercel login` interactively;
-2. run `vercel link` from the project root and select the existing Beach Set Manager Vercel project;
-3. verify the link before Codex changes deployment configuration;
-4. use `vercel env pull` only when local environment values are actually needed, writing them to ignored local env files;
-5. never commit sensitive environment values.
+`asrrkwyqerfkynhjypov`
+
+Project refs are identifiers, not credentials.
+
+For approved remote database work:
+
+1. use the repository/project-scoped Supabase CLI version where practical;
+2. authenticate through the supported local login flow;
+3. verify the linked project ref before every remote command;
+4. inspect local and remote migration history before applying anything;
+5. inspect the exact SQL and target;
+6. keep schema changes in reviewed timestamped repository migrations;
+7. verify RLS, grants, functions, triggers, Realtime and application invariants afterward;
+8. run security/performance advisors and classify every new warning.
+
+Never mutate real Petalon AppData merely for testing convenience. Prefer read-only checks and rollback-only transactions. Never print or commit access tokens, Auth passwords, database passwords or service-role credentials.
+
+## Vercel and current environment reality
+
+The existing Vercel application deploys the Production frontend from `main` and creates Preview deployments for branches/PRs.
+
+Required public browser variables are:
+
+- `VITE_SUPABASE_URL`;
+- `VITE_SUPABASE_PUBLISHABLE_KEY`.
+
+A separate Development Supabase environment is not currently proven. A Preview configured with the live Beach Set Manager backend is Production-capable and must receive Production-level data precautions.
+
+The desired future state is separate Development and Production data environments. Until that exists, do not describe Preview isolation as implemented merely because it is the preferred policy.
+
+For Vercel work:
+
+1. authenticate through the supported local flow when necessary;
+2. verify the existing Vercel project/link and environment target;
+3. pull environment values only into ignored local files when genuinely required;
+4. never commit populated environment files;
+5. verify the deployed commit/build and required PWA lifecycle after reliability-sensitive changes.
+
+## Production and PWA release rules
+
+- Treat Petalon as live operational data.
+- Do not use Preview/Production for casual destructive testing.
+- Verify Auth, membership loading, one safe authoritative write and Realtime convergence after an authorized deployment.
+- Reliability releases require realistic installed-PWA close/reopen, background/foreground, lock/unlock and concurrent-device testing.
+- Frontend rollback does not undo a database migration; prefer additive compatibility and deliberate forward fixes.
+- Preserve incident evidence before corrective action.
 
 ## Human/manual handoff rule
 
-Automation is not automatically better.
+Automation is not automatically better. If a short manual action by Vuk is simpler, faster or more reliable, request it directly.
 
-If a short manual action by Vuk is simpler, faster or more reliable than agent automation, ChatGPT/Codex should explicitly hand that action to Vuk. Typical examples include:
+After at most two sensible attempts at the same credential, CLI, browser or provider blocker, stop and report:
 
-- browser login/authorization;
-- approving an OAuth/CLI login;
-- visually checking one or two screens/devices;
-- entering a small amount of one-off test data;
-- toggling one dashboard setting;
-- confirming which account/project is selected;
-- performing a destructive action that deserves direct human confirmation.
+```text
+BLOCKER:
+<exact blocker>
 
-Codex must not burn time/tokens looping around external-tool blockers. After at most two sensible attempts at the same credential, CLI, browser or provider blocker, stop and report:
+VUK ACTION:
+<one exact short manual action>
 
-1. the exact blocker;
-2. the exact manual action Vuk should perform;
-3. the command/check Codex will run immediately afterward.
+AFTERWARD I WILL:
+<next command/check>
+```
+
+Typical human steps include provider/OAuth login, visual device testing, target confirmation and destructive-action approval.
+
+## Credential rules
+
+- Never put passwords, service-role keys, database passwords, personal access tokens or privileged provider credentials in prompts, committed files or the Second Brain.
+- Use supported local authentication and ignored environment/credential storage.
+- Only the publishable Supabase key belongs in browser configuration.
+- Authorization comes from Auth plus active membership RLS, never from frontend identity maps or metadata.
 
 ## Domain workflow
 
-A custom domain is not required for backend/shared-app development.
+The current `vercel.app` URL is sufficient for development and operational validation. A custom product domain remains a Production Preparation / commercial-branding task.
 
-During development:
+When approved:
 
-- use local URLs and Vercel Preview / `vercel.app` URLs;
-- keep Development Supabase separate from future Production Supabase;
-- do not buy a Supabase custom API domain.
-
-During Production Preparation / Petalon Commercial Pilot:
-
-1. finalize the long-term product brand;
-2. purchase the product domain;
-3. add the production frontend domain/subdomain to the Vercel project;
-4. create the DNS records requested by Vercel at the registrar/DNS provider;
-5. verify HTTPS/TLS and production routing;
-6. confirm Preview deployments still use development data only;
-7. keep the standard Supabase project URL unless a later integration creates a real need for `api.<product-domain>`.
+1. finalize the long-term brand;
+2. purchase the domain through an independently controlled registrar/DNS provider where practical;
+3. connect the Production frontend domain to the existing Vercel project;
+4. verify DNS, HTTPS/TLS and routing;
+5. verify Preview/Production environment separation or clearly retain Production-capable Preview precautions;
+6. keep the standard Supabase URL unless a branded API hostname has a concrete value.
 
 See [[17_Domain_and_Production_Branding]].

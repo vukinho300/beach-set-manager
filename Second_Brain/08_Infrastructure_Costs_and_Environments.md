@@ -1,25 +1,59 @@
 # Infrastructure, Costs and Environments
 
 Status: `canonical research snapshot`
-Reviewed: 2026-08-14
+Last project-state review: 2026-08-28
+Pricing snapshot reviewed: 2026-08-14
 
-## Development cost target
+## Current environment reality
 
-Current phase target: as close to €0/month as practical.
+Beach Set Manager is no longer a local-only prototype.
 
-Recommended now:
+Current verified project state:
 
-- local development: free;
-- GitHub: existing repository;
-- Vercel Hobby: acceptable while the project remains personal/non-commercial development;
-- Supabase Free: acceptable for development/shared prototype;
-- local Supabase is an option for schema/migration work;
-- custom product domain: defer until production preparation/commercial pilot unless Vuk buys early purely to reserve the brand;
-- Supabase custom API domain: do not buy during development.
+- one GitHub repository and one Vercel application;
+- Production frontend deployed from `main`;
+- one live Beach Set Manager Supabase/Postgres project: `uonovdnxfjqfjkhopxwg`;
+- live Petalon Auth, active membership RLS, authoritative shared state and Realtime;
+- Production Reliability R1/R2, private immutable revision history and private client sync telemetry;
+- additive Koversada database foundation, location state and memberships provisioned remotely;
+- Draft PR #28 contains the unmerged Step 10 frontend, whose rollout remains behind the Second Incident reliability gate.
 
-## Supabase Free snapshot
+KNO project `asrrkwyqerfkynhjypov` is unrelated and must never be touched or reused.
 
-Current public limits include:
+A separate Beach Set Manager Development Supabase project is not currently proven to exist. Local development and Vercel Previews may therefore be configured against the live backend. Any Preview using live credentials is Production-capable and must be handled with Production operational-data precautions.
+
+## Desired future environment topology
+
+The safer target is:
+
+- Development: local/Vercel Preview frontend plus a separate Development Supabase project containing non-production seed data;
+- Production: `main` Vercel deployment plus the live Beach Set Manager Supabase project.
+
+Under that target:
+
+- Preview deployments do not use Production data;
+- migrations are exercised against Development first and promoted through reviewed repository files;
+- destructive/fault-injection tests use non-production data;
+- provider links and environment variables clearly identify their environment.
+
+This section describes a desired future topology, not an implemented current separation.
+
+## Current cost objective
+
+Keep infrastructure cost as low as practical without treating price as more important than operational reliability, backups or restore capability.
+
+Current low-cost components include:
+
+- local development;
+- the existing GitHub repository;
+- Vercel Hobby while use remains eligible under its terms;
+- Supabase Free while its reliability, pause and backup characteristics remain acceptable;
+- local Supabase for migration/schema development where practical;
+- deferred custom product/API domains until branding or integration creates a concrete need.
+
+## Supabase Free pricing snapshot
+
+The 2026-08-14 research snapshot recorded public limits including:
 
 - 500 MB database;
 - 5 GB egress;
@@ -31,56 +65,45 @@ Current public limits include:
 - inactive Free projects may pause after about one week of low activity;
 - automatic backups are not included on Free.
 
-These limits are far above the expected Vuk/Vito development load and likely above a few small beach locations by raw capacity. Free-tier capacity is therefore not the main reason to upgrade.
+Raw capacity is likely sufficient for the current small user count, but capacity alone does not establish Production suitability. Active-season availability, backup/PITR and tested restoration matter independently of traffic volume.
 
-## Supabase upgrade trigger
+Re-check current provider limits and prices before relying on this snapshot.
 
-Upgrade to Pro when at least one of these becomes true:
+## Supabase upgrade triggers
 
-1. first paying production customer;
-2. production reliability/backups/support justify it;
-3. Free quota approaches a meaningful threshold;
-4. automatic pausing is unacceptable for the active season;
-5. required production-only feature appears.
+Evaluate Pro or another appropriate plan when any of these becomes true:
 
-Current Pro entry price is about $25/month and includes 7-day daily backups.
+1. automatic pausing is unacceptable during the active season;
+2. managed backups/PITR and support are required for operational risk;
+3. a paying/commercial customer is onboarded;
+4. a quota approaches a meaningful threshold;
+5. a required Production-only feature appears.
+
+The 2026-08-14 snapshot recorded Pro entry pricing around $25/month with seven-day daily backups. Verify current pricing and retention before a commercial or seasonal decision.
 
 ## Vercel
 
-Hobby is $0 and intended for personal/non-commercial use. Pro is currently $20/month and is designed for professional/commercial work.
+The 2026-08-14 snapshot recorded Hobby at $0 for eligible personal/non-commercial use and Pro around $20/month for professional/commercial use.
 
-Upgrade trigger: when the deployed customer-facing app becomes commercial/paid, not when development traffic becomes large.
+Re-evaluate the plan when customer-facing use becomes commercial or current plan terms/features no longer fit. Traffic volume is not the only trigger.
 
 ## Domain cost
 
-The domain is not required for shared-backend development. Purchase it during the Production Preparation / Petalon Commercial Pilot phase, once the product brand is finalized and the shared backend has been validated.
+A custom domain is not required for shared-backend development. Purchase one during Production Preparation / Petalon Commercial Pilot after the product brand is finalized, unless Vuk chooses earlier reservation.
 
-Preferred registrar strategy is an independent low-cost registrar, currently Cloudflare Registrar when the chosen TLD is supported, with DNS pointing to Vercel. See [[17_Domain_and_Production_Branding]].
+Prefer independent registrar/DNS ownership where supported. A paid Supabase custom API domain is not part of the default budget and should be added only for a concrete product or integration need. See [[17_Domain_and_Production_Branding]].
 
-A Supabase custom API domain is not part of the default production budget. It is a paid add-on and should only be added later if a branded/stable API hostname has real product or integration value.
-
-## Environments
-
-Minimum before backend migration:
-
-- Development: local/Vercel Preview + Development Supabase.
-- Production: main deployment + Production Supabase only after the shared prototype is validated.
-
-Preview builds must never point at the production database.
-
-## Usage monitoring
-
-Record both provider-level and location-level usage.
+## Usage and reliability monitoring
 
 Provider metrics:
 
 - database size;
 - egress;
-- Realtime messages;
-- Realtime peak connections;
+- Realtime messages and peak connections;
 - MAUs;
 - Edge Function invocations;
-- frontend hosting/compute usage.
+- frontend hosting/compute usage;
+- backup/PITR status and restore evidence.
 
 Application metrics later:
 
@@ -89,26 +112,27 @@ Application metrics later:
 - transactions/day;
 - reservations/day;
 - Aquapark entries/day;
-- mutation count/day.
+- mutation/operation count/day;
+- conflict and recovery rates.
 
-This allows cost per active location to be measured from real seasonal usage instead of guessed.
+This supports real cost-per-location and reliability decisions rather than guesses.
 
 ## Winter strategy
 
-If some locations remain active, keep the shared production stack and suspend only expired location licenses.
+If locations remain active, keep the shared Production stack and suspend only expired location licenses when licensing exists.
 
 If every customer is inactive:
 
-1. end/suspend licenses;
+1. end/suspend licenses when implemented;
 2. generate season reports;
-3. export verified database backup(s);
-4. test restore;
-5. evaluate downgrading Supabase to Free so it can pause;
-6. take commercial hosting off paid service if appropriate;
-7. before next season, restore/resume, apply migrations, test, upgrade production tier and activate new license periods.
+3. export verified database backups;
+4. perform a restore drill;
+5. evaluate plan downgrade/pausing only after recovery is proven;
+6. adjust commercial hosting if appropriate;
+7. before the next season, restore/resume, apply migrations, test real workflows and activate required plans/licenses.
 
-Supabase currently allows a paused Free project to be restored for up to one year, but an external backup remains mandatory.
+An external verified backup remains mandatory when relying on any provider pause/retention behavior.
 
-## Research sources
+## Research rule
 
-Re-check provider pricing, registrar renewal prices and hosting terms before every commercial season because limits and prices can change.
+Re-check provider pricing, quotas, backup retention, registrar renewal prices and hosting terms before every commercial season because they can change.
