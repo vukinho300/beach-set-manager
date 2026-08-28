@@ -12,9 +12,9 @@ function getSupabaseConfiguration() {
 }
 
 /**
- * Returns a browser client only when both public Supabase environment values
- * are configured. Calling this function only constructs the client; it does
- * not issue a request. The current local-only app does not call it.
+ * Returns the browser client used by the shared Production application when
+ * both public Supabase environment values are configured. Calling this
+ * function only constructs the client; it does not issue a request.
  */
 export function getSupabaseClient(): SupabaseClient<Database> | null {
   if (client !== undefined) {

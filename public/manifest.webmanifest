@@ -1,7 +1,7 @@
 {
   "name": "Beach Set Manager",
   "short_name": "Beach Sets",
-  "description": "Local phone app for tracking beach sunbed and parasol sets.",
+  "description": "Shared beach and Aquapark operations manager.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
