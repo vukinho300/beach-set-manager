@@ -1,81 +1,134 @@
 # Current Architecture and Repository State
 
 Status: `canonical`
-Repository reviewed: 2026-08-13
-Checkpoint inspected: `7431bd93884337db1ab47e9bac2a50fc8e07a168`
+Repository reviewed: 2026-08-28
+Main checkpoint inspected: `8f7f332e51e402dbdcba4bc63d029f5ff6c4c042`
 
-## Verified repository state
+## Application
 
-The app is a React 18 + Vite + TypeScript PWA. `package.json` currently has only React/ReactDOM as runtime dependencies; there is no Supabase/Firebase/backend SDK yet.
+Beach Set Manager is a React 18 + Vite + TypeScript PWA deployed through Vercel.
 
-The application is still mostly monolithic: `src/App.tsx` is roughly 150 KB and `src/App.css` roughly 80 KB. This is acceptable as a prototype but should be decomposed gradually during the backend phase rather than rewritten all at once.
+The frontend remains relatively monolithic in `src/App.tsx`, while Supabase/Auth/shared-state/recovery concerns have progressively moved into dedicated services.
 
-## Current persistence
+## Authoritative backend
 
-Operational state is saved into browser `localStorage` under versioned keys. Current app data includes:
+Beach Set Manager uses a dedicated Supabase/Postgres project.
 
-- 56 numbered beach sets;
-- 4 extra beds;
+Petalon is represented as location:
+
+`00000000-0000-4000-8000-000000000001`
+
+Authoritative operational state currently remains one versioned `public.location_state` JSONB row per location:
+
+- `location_id`;
+- `state`;
+- `revision`;
+- `updated_at`;
+- `updated_by`.
+
+Writes use expected-revision compare-and-swap protection.
+
+Supabase is authoritative for server-confirmed state.
+
+## Authentication and membership
+
+Supabase Auth is active.
+
+Canonical Petalon memberships:
+
+- Vuk — `PLATFORM_OWNER`;
+- Mark — `LOCATION_ADMIN`;
+- Vito — `WORKER`.
+
+`location_memberships` + RLS are the access/revocation boundary.
+
+Frontend role presentation is not the database security boundary.
+
+## Current reliability architecture
+
+Production Reliability R1 provides:
+
+- background authoritative convergence;
+- UI continuity;
+- user/location-scoped pending recovery;
+- retry/resume behavior;
+- conservative conflict handling.
+
+Production Reliability R2 is merged and running.
+
+R2 adds:
+
+- explicit visible-mutation admission;
+- bounded device-durability operations;
+- localStorage + IndexedDB resilience;
+- fail-closed unsafe-write behavior;
+- emergency preserved-state export;
+- client write-stage telemetry;
+- authoritative-Realtime versus local-divergence classification.
+
+Private immutable `location_state_history` records accepted revisions for forensic reconstruction.
+
+Private client sync telemetry records pipeline stages without storing operational/customer payloads.
+
+## Proven current limitation
+
+The Second Incident on 2026-08-28 proves the whole-location CAS boundary is too coarse for normal concurrent operation.
+
+Vuk's unrelated Aquapark change and Vito's Set 13 payment both began from revision 443.
+
+Vuk's write became revision 444.
+
+Vito's Set 13 whole-location save then returned conflict even though revision 443 → 444 changed no Set, Bed or financial transaction.
+
+The current model therefore protects against stale overwrite but can manufacture false contention between independent resources.
+
+This is the immediate Reliability R3 driver.
+
+## Current transaction/report model
+
+`AppData` includes:
+
+- 56 numbered Sets;
+- 4 Extra Beds;
 - beach reservations;
 - saved surnames;
-- non-numbered sunbed sales;
+- non-numbered Sunbed sales;
 - Aquapark entries;
-- transaction ledger;
+- current transaction ledger;
+- Report Archive;
 - automatic reset date.
 
-There is migration code for older localStorage versions and backup/import compatibility.
+Transactions support active/deleted state.
 
-## Current transaction model
+Reports derive revenue from transaction data.
 
-The app already has a current-day `Transaction` ledger with types:
+## Step 10 / Koversada status
 
-- `beach_set`
-- `bed`
-- `sunbed`
-- `beach_reservation`
-- `aquapark`
+Draft PR #28 implements the multi-location frontend architecture but remains unmerged.
 
-Transactions support active/deleted state and deleted timestamps. Daily reports are derived from active transactions. Operational objects still contain some pricing and linkage fields such as `dailySaleId`, so the backend migration must remove duplicate financial ownership carefully rather than assuming the ledger is already the only source of truth.
+The reviewed additive database foundation has been provisioned remotely.
 
-## Current pages/navigation
+Koversada exists as:
 
-Top-level tabs:
+`00000000-0000-4000-8000-000000000002`
 
-- Beaches
-- Sunbeds
-- Aquapark
-- Settings
+with Aquapark-only profile and separate memberships/state.
 
-Settings contains Transactions and Reports views plus reset/backup tooling. Beaches has persistent Beach 1 / Beach 2 / Beds shortcuts.
+Production frontend code remains current main/R2, not PR #28.
 
-## Current offline behavior
+Do not treat Step 10 frontend behavior as Production until PR #28 or its successor is reviewed, merged and deployed.
 
-The PWA registers `public/sw.js`. It provides network-first GET caching with cached fallbacks and navigation fallback to `/`. This supports app-shell/read availability when network access is lost, but there is no shared backend and no offline mutation queue or conflict-aware synchronization.
+## Architecture direction
 
-## Current deployment
+The whole-AppData JSONB row remains an MVP bridge.
 
-Repository docs describe Vercel deployment as a Vite static app with no environment variables. Existing README/DEPLOYMENT still explicitly say the app is local-only. These files will become outdated once the shared-backend implementation begins and must be updated in that phase.
+Reliability R3 should move real business actions toward:
 
-## Important current constraints
+- immutable client operation IDs;
+- durable operation outbox;
+- authenticated idempotent server commands;
+- append-only accepted-operation history;
+- immutable/voidable financial ledger;
+- narrower entity/resource concurrency boundaries.
 
-1. No authentication.
-2. No server/database.
-3. No cross-device synchronization.
-4. Browser localStorage is authoritative.
-5. Daily Reset is device-driven.
-6. No server-side concurrency controls.
-7. No tenant/customer isolation.
-8. No licensing enforcement.
-
-## Do not mistake for implemented
-
-The following are accepted direction, not current code:
-
-- Supabase/Postgres;
-- Auth;
-- RLS;
-- multi-tenancy;
-- realtime shared state;
-- offline sync outbox;
-- licensing/session controls;
-- private platform-admin control plane.
+KNO remains unrelated and untouched.
