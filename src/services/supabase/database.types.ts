@@ -81,21 +81,65 @@ export type Database = {
           },
         ]
       }
+      location_daily_real_revenue: {
+        Row: {
+          business_date: string
+          created_at: string
+          created_by: string
+          location_id: string
+          real_revenue: number
+          updated_at: string
+          updated_by: string
+        }
+        Insert: {
+          business_date: string
+          created_at?: string
+          created_by: string
+          location_id: string
+          real_revenue: number
+          updated_at?: string
+          updated_by: string
+        }
+        Update: {
+          business_date?: string
+          created_at?: string
+          created_by?: string
+          location_id?: string
+          real_revenue?: number
+          updated_at?: string
+          updated_by?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "location_daily_real_revenue_location_id_fkey"
+            columns: ["location_id"]
+            isOneToOne: false
+            referencedRelation: "locations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       locations: {
         Row: {
           created_at: string
           id: string
+          interface_profile: string
           name: string
+          slug: string
         }
         Insert: {
           created_at?: string
           id?: string
+          interface_profile: string
           name: string
+          slug: string
         }
         Update: {
           created_at?: string
           id?: string
+          interface_profile?: string
           name?: string
+          slug?: string
         }
         Relationships: []
       }
@@ -114,6 +158,20 @@ export type Database = {
           p_expected_revision?: number
           p_location_id: string
           p_mutation_sequence?: number
+        }
+        Returns: undefined
+      }
+      resolve_login_username: {
+        Args: {
+          p_username: string
+        }
+        Returns: string
+      }
+      set_location_daily_real_revenue: {
+        Args: {
+          p_business_date: string
+          p_location_id: string
+          p_real_revenue: number
         }
         Returns: undefined
       }

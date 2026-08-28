@@ -23,6 +23,18 @@ export function shouldArmAdmissionWatchdog(
     && deviceSafety === 'safe';
 }
 
+export function canSwitchOperationalLocation(
+  localMatchesController: boolean,
+  syncStatus: SharedSyncStatus,
+  deviceSafety: SharedDeviceSafety,
+  locallyBlocked: boolean,
+): boolean {
+  return localMatchesController
+    && syncStatus === 'saved'
+    && deviceSafety === 'safe'
+    && !locallyBlocked;
+}
+
 export function scheduleAdmissionWatchdog(
   onTimeout: () => void,
   delayMs = OPERATIONAL_ADMISSION_WINDOW_MS,

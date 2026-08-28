@@ -26,6 +26,7 @@ export type SharedDeviceSafety = 'safe' | 'securing' | 'durable' | 'blocked';
 export type SharedUpdateRejectionReason =
   | 'controller_unavailable'
   | 'identity_mismatch'
+  | 'location_mismatch'
   | 'deactivated'
   | 'paused'
   | 'not_ready'

@@ -1,4 +1,14 @@
-export const UI_CONTINUITY_STORAGE_KEY = 'beach-set-manager:ui-continuity:v1';
+import {
+  PETALON_LOCATION_ID,
+  type LocationInterfaceProfile,
+} from '../../domain/location';
+
+export const LEGACY_UI_CONTINUITY_STORAGE_KEY =
+  'beach-set-manager:ui-continuity:v1';
+export const UI_CONTINUITY_STORAGE_PREFIX =
+  'beach-set-manager:ui-continuity:v2:';
+const LEGACY_MIGRATION_STORAGE_KEY =
+  'beach-set-manager:ui-continuity:v2:legacy-petalon-owner';
 
 export const OPERATIONAL_TABS = ['beaches', 'sunbeds', 'aquapark', 'settings'] as const;
 export type OperationalTab = (typeof OPERATIONAL_TABS)[number];
@@ -10,9 +20,24 @@ export type UiContinuityState = {
 
 export type UiContinuityStorage = Pick<Storage, 'getItem' | 'setItem'>;
 
-export function createDefaultUiContinuity(): UiContinuityState {
+export function getAllowedOperationalTabs(
+  profile: LocationInterfaceProfile,
+): OperationalTab[] {
+  return profile === 'KOVERSADA_AQUAPARK'
+    ? ['aquapark', 'settings']
+    : [...OPERATIONAL_TABS];
+}
+export function getDefaultOperationalTab(
+  profile: LocationInterfaceProfile,
+): OperationalTab {
+  return profile === 'KOVERSADA_AQUAPARK' ? 'aquapark' : 'beaches';
+}
+
+export function createDefaultUiContinuity(
+  defaultTab: OperationalTab = 'beaches',
+): UiContinuityState {
   return {
-    activeTab: 'beaches',
+    activeTab: defaultTab,
     scrollPositions: {
       beaches: 0,
       sunbeds: 0,
@@ -32,41 +57,79 @@ function safeScrollPosition(value: unknown): number {
     : 0;
 }
 
-export function loadUiContinuity(storage: UiContinuityStorage): UiContinuityState {
-  const defaults = createDefaultUiContinuity();
+function storageKey(userId: string, locationId: string): string {
+  return `${UI_CONTINUITY_STORAGE_PREFIX}${userId}:${locationId}`;
+}
 
+function parseContinuity(
+  raw: string,
+  allowedTabs: OperationalTab[],
+  defaultTab: OperationalTab,
+): UiContinuityState {
+  const defaults = createDefaultUiContinuity(defaultTab);
+  const parsed = JSON.parse(raw) as {
+    activeTab?: unknown;
+    scrollPositions?: Record<string, unknown>;
+  };
+  const positions = parsed.scrollPositions;
+  const parsedTab = isOperationalTab(parsed.activeTab)
+    && allowedTabs.includes(parsed.activeTab)
+    ? parsed.activeTab
+    : defaults.activeTab;
+
+  return {
+    activeTab: parsedTab,
+    scrollPositions: {
+      beaches: safeScrollPosition(positions?.beaches),
+      sunbeds: safeScrollPosition(positions?.sunbeds),
+      aquapark: safeScrollPosition(positions?.aquapark),
+      settings: safeScrollPosition(positions?.settings),
+    },
+  };
+}
+
+export function loadUiContinuity(
+  storage: UiContinuityStorage,
+  userId: string,
+  locationId: string,
+  profile: LocationInterfaceProfile,
+): UiContinuityState {
+  const allowedTabs = getAllowedOperationalTabs(profile);
+  const defaultTab = getDefaultOperationalTab(profile);
   try {
-    const raw = storage.getItem(UI_CONTINUITY_STORAGE_KEY);
-    if (!raw) {
-      return defaults;
+    const key = storageKey(userId, locationId);
+    const raw = storage.getItem(key);
+    if (raw) {
+      return parseContinuity(raw, allowedTabs, defaultTab);
     }
 
-    const parsed = JSON.parse(raw) as {
-      activeTab?: unknown;
-      scrollPositions?: Record<string, unknown>;
-    };
-    const positions = parsed.scrollPositions;
-
-    return {
-      activeTab: isOperationalTab(parsed.activeTab) ? parsed.activeTab : defaults.activeTab,
-      scrollPositions: {
-        beaches: safeScrollPosition(positions?.beaches),
-        sunbeds: safeScrollPosition(positions?.sunbeds),
-        aquapark: safeScrollPosition(positions?.aquapark),
-        settings: safeScrollPosition(positions?.settings),
-      },
-    };
+    if (
+      locationId === PETALON_LOCATION_ID
+      && !storage.getItem(LEGACY_MIGRATION_STORAGE_KEY)
+    ) {
+      const legacy = storage.getItem(LEGACY_UI_CONTINUITY_STORAGE_KEY);
+      if (legacy) {
+        const migrated = parseContinuity(legacy, allowedTabs, defaultTab);
+        storage.setItem(key, JSON.stringify(migrated));
+        storage.setItem(LEGACY_MIGRATION_STORAGE_KEY, userId);
+        return migrated;
+      }
+    }
   } catch {
-    return defaults;
+    // Continuity is best-effort and contains no operational AppData.
   }
+
+  return createDefaultUiContinuity(defaultTab);
 }
 
 export function saveUiContinuity(
   storage: UiContinuityStorage,
+  userId: string,
+  locationId: string,
   state: UiContinuityState,
 ): void {
   try {
-    storage.setItem(UI_CONTINUITY_STORAGE_KEY, JSON.stringify(state));
+    storage.setItem(storageKey(userId, locationId), JSON.stringify(state));
   } catch {
     // UI continuity is best-effort and never carries operational AppData.
   }
@@ -103,8 +166,8 @@ export function shouldWaitForScrollLayout(
   attemptsRemaining: number,
 ): boolean {
   return (
-    safeScrollPosition(maximumScrollY) < safeScrollPosition(requestedScrollY) &&
-    attemptsRemaining > 0
+    safeScrollPosition(maximumScrollY) < safeScrollPosition(requestedScrollY)
+    && attemptsRemaining > 0
   );
 }
 

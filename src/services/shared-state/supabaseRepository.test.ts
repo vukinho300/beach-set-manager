@@ -25,6 +25,7 @@ type RealtimeFilter = {
 };
 
 const LOCATION_ID = '00000000-0000-4000-8000-000000000001';
+const KOVERSADA_LOCATION_ID = '00000000-0000-4000-8000-000000000002';
 
 function stateRow(
   revision: number,
@@ -343,7 +344,7 @@ describe('Supabase shared location state repository', () => {
     expect(unexplainedResult.status).toBe('unavailable');
   });
 
-  it('subscribes only to Petalon location_state updates and cleans up stably', () => {
+  it('subscribes only to the selected location_state and ignores another location', () => {
     const fake = new FakeSupabaseClient();
     const repository = createSupabaseSharedLocationStateRepository(fake.asClient());
     const listener = vi.fn();
@@ -386,5 +387,32 @@ describe('Supabase shared location state repository', () => {
     expect(fake.removeChannel).toHaveBeenCalledTimes(1);
     expect(fake.removeChannel).toHaveBeenCalledWith(fake.channels[0]);
     expect(listener).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a Koversada operational subscription isolated from Petalon updates', () => {
+    const fake = new FakeSupabaseClient();
+    const repository = createSupabaseSharedLocationStateRepository(fake.asClient());
+    const listener = vi.fn();
+
+    const unsubscribe = repository.subscribe(KOVERSADA_LOCATION_ID, listener);
+    expect(fake.channels[0].onCalls[0].filter.filter).toBe(
+      `location_id=eq.${KOVERSADA_LOCATION_ID}`,
+    );
+
+    fake.channels[0].emit({
+      ...stateRow(263),
+      location_id: LOCATION_ID,
+    });
+    expect(listener).not.toHaveBeenCalled();
+
+    fake.channels[0].emit({
+      ...stateRow(1, { aquaparkEntries: [{ id: 'worker-update' }] }),
+      location_id: KOVERSADA_LOCATION_ID,
+    });
+    expect(listener).toHaveBeenCalledWith({
+      locationId: KOVERSADA_LOCATION_ID,
+      revision: 1,
+    });
+    unsubscribe();
   });
 });

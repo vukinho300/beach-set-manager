@@ -7,9 +7,9 @@ export function LoginPage({
 }: {
   error: string | null;
   submitting: boolean;
-  onSignIn: (email: string, password: string) => Promise<void>;
+  onSignIn: (identifier: string, password: string) => Promise<void>;
 }) {
-  const [email, setEmail] = useState('');
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -19,7 +19,7 @@ export function LoginPage({
     }
 
     try {
-      await onSignIn(email, password);
+      await onSignIn(identifier, password);
     } finally {
       setPassword('');
     }
@@ -29,19 +29,19 @@ export function LoginPage({
     <main className="auth-shell">
       <section className="auth-card" aria-labelledby="login-heading">
         <header className="auth-card-header">
-          <p className="eyebrow">Camp Petalon</p>
+          <p className="eyebrow">Beach operations</p>
           <h1 id="login-heading">Beach Set Manager</h1>
           <p>Sign in with your assigned account to continue.</p>
         </header>
 
         <form className="auth-form" onSubmit={(event) => void submit(event)}>
           <label className="auth-field">
-            <span>Email</span>
+            <span>Email or username</span>
             <input
-              type="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              autoComplete="email"
+              type="text"
+              value={identifier}
+              onChange={(event) => setIdentifier(event.target.value)}
+              autoComplete="username"
               autoCapitalize="none"
               spellCheck={false}
               disabled={submitting}
@@ -91,7 +91,7 @@ export function AuthStatusPage({
     <main className="auth-shell">
       <section className="auth-card auth-status-card" aria-live="polite">
         {loading ? <span className="auth-spinner" aria-hidden="true" /> : null}
-        <p className="eyebrow">Camp Petalon</p>
+        <p className="eyebrow">Beach operations</p>
         <h1>{title}</h1>
         <p>{message}</p>
         {children}

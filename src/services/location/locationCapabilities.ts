@@ -1,34 +1,34 @@
-import { parsePetalonRole, type PetalonRole } from './petalonMembership';
+import type { LocationInterfaceProfile } from '../../domain/location';
+import { parseLocationRole, type LocationRole } from './locationMemberships';
 
-export type PetalonCapabilities = {
+export type LocationCapabilities = {
   canUseNormalOperations: boolean;
   canRunDailyReset: boolean;
   canExportBackup: boolean;
   canManageLocation: boolean;
   canUseDestructiveSharedTools: boolean;
+  canManageRealRevenue: boolean;
   isPlatformAdmin: boolean;
   isLocationOwner: boolean;
 };
 
-// These capabilities control the current product experience only. They are not
-// an action-level database authorization boundary: every active member still
-// needs broad access to update the shared location_state JSONB for normal work.
-
-const NO_CAPABILITIES: PetalonCapabilities = {
+const NO_CAPABILITIES: LocationCapabilities = {
   canUseNormalOperations: false,
   canRunDailyReset: false,
   canExportBackup: false,
   canManageLocation: false,
   canUseDestructiveSharedTools: false,
+  canManageRealRevenue: false,
   isPlatformAdmin: false,
   isLocationOwner: false,
 };
 
-export function getPetalonCapabilities(
+export function getLocationCapabilities(
   value: unknown,
+  _profile: LocationInterfaceProfile,
   active = true,
-): PetalonCapabilities {
-  const role = parsePetalonRole(value);
+): LocationCapabilities {
+  const role = parseLocationRole(value);
   if (!active || !role) {
     return NO_CAPABILITIES;
   }
@@ -40,12 +40,13 @@ export function getPetalonCapabilities(
     canExportBackup: true,
     canManageLocation,
     canUseDestructiveSharedTools: canManageLocation,
+    canManageRealRevenue: canManageLocation,
     isPlatformAdmin: role === 'PLATFORM_OWNER',
     isLocationOwner: role === 'LOCATION_ADMIN',
   };
 }
 
-export function getPetalonRoleDisplayLabel(role: PetalonRole): string {
+export function getLocationRoleDisplayLabel(role: LocationRole): string {
   switch (role) {
     case 'PLATFORM_OWNER':
       return 'Platform Admin';

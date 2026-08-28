@@ -23,6 +23,10 @@ type SignInResponse = {
 type SignOutResponse = {
   error: { message: string } | null;
 };
+type UsernameResolutionResponse = {
+  data: string | null;
+  error: { message: string } | null;
+};
 
 function session(userId = 'user-1', email = 'person@example.test'): Session {
   return {
@@ -54,6 +58,10 @@ class FakeAuthClient {
     error: { message: 'Invalid credentials' },
   });
   signOutHandler: () => Promise<SignOutResponse> = async () => ({ error: null });
+  usernameResolutionHandler: () => Promise<UsernameResolutionResponse> = async () => ({
+    data: null,
+    error: null,
+  });
 
   readonly unsubscribe = vi.fn();
   readonly getSession = vi.fn(() => this.getSessionHandler());
@@ -61,6 +69,9 @@ class FakeAuthClient {
     this.signInHandler(),
   );
   readonly signOut = vi.fn((_options: { scope: 'local' }) => this.signOutHandler());
+  readonly rpc = vi.fn((_functionName: string, _args: { p_username: string }) =>
+    this.usernameResolutionHandler(),
+  );
   readonly onAuthStateChange = vi.fn((listener: AuthListener) => {
     this.listener = listener;
     return { data: { subscription: { unsubscribe: this.unsubscribe } } };
@@ -78,6 +89,7 @@ class FakeAuthClient {
         signOut: this.signOut,
         onAuthStateChange: this.onAuthStateChange,
       },
+      rpc: this.rpc,
     } as unknown as SupabaseClient<Database>;
   }
 }
@@ -216,9 +228,76 @@ describe('Supabase browser auth service', () => {
 
     expect(result).toEqual({
       status: 'failed',
-      message: 'Unable to sign in. Check your email and password and try again.',
+      message: 'Unable to sign in. Check your email/username and password and try again.',
     });
     expect(JSON.stringify(result)).not.toContain('account does not exist');
+  });
+
+  it('resolves a normalized username then lets Supabase Auth validate the password', async () => {
+    const fake = new FakeAuthClient();
+    fake.usernameResolutionHandler = async () => ({
+      data: 'operational-account@example.test',
+      error: null,
+    });
+    const signedInSession = session('koversada-worker', 'operational-account@example.test');
+    fake.signInHandler = async () => ({
+      data: { session: signedInSession, user: signedInSession.user },
+      error: null,
+    });
+
+    await expect(createSupabaseAuthService(fake.asClient()).signIn(
+      '  Koversada-Radnik  ',
+      'test-password',
+    )).resolves.toEqual({
+      status: 'authenticated',
+      user: {
+        id: 'koversada-worker',
+        email: 'operational-account@example.test',
+      },
+    });
+    expect(fake.rpc).toHaveBeenCalledWith('resolve_login_username', {
+      p_username: 'koversada-radnik',
+    });
+    expect(fake.signInWithPassword).toHaveBeenCalledWith({
+      email: 'operational-account@example.test',
+      password: 'test-password',
+    });
+  });
+
+  it('uses the same generic failure for an unknown username', async () => {
+    const fake = new FakeAuthClient();
+    const result = await createSupabaseAuthService(fake.asClient()).signIn(
+      'unknown-worker',
+      'wrong-password',
+    );
+
+    expect(result).toEqual({
+      status: 'failed',
+      message: 'Unable to sign in. Check your email/username and password and try again.',
+    });
+    expect(fake.signInWithPassword).not.toHaveBeenCalled();
+  });
+
+  it('uses the same generic failure when a known username has a wrong password', async () => {
+    const fake = new FakeAuthClient();
+    fake.usernameResolutionHandler = async () => ({
+      data: 'operational-account@example.test',
+      error: null,
+    });
+
+    const result = await createSupabaseAuthService(fake.asClient()).signIn(
+      'koversada-radnik',
+      'wrong-password',
+    );
+
+    expect(fake.signInWithPassword).toHaveBeenCalledWith({
+      email: 'operational-account@example.test',
+      password: 'wrong-password',
+    });
+    expect(result).toEqual({
+      status: 'failed',
+      message: 'Unable to sign in. Check your email/username and password and try again.',
+    });
   });
 
   it('deduplicates simultaneous sign-in submissions', async () => {

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   OPERATIONAL_ADMISSION_WINDOW_MS,
+  canSwitchOperationalLocation,
   scheduleAdmissionWatchdog,
   shouldArmAdmissionWatchdog,
   shouldLockOperationalMutations,
@@ -33,5 +34,14 @@ describe('operational write safety', () => {
   it('does not arm during normal controller securing or durable server retry', () => {
     expect(shouldArmAdmissionWatchdog(false, 'saving', 'securing')).toBe(false);
     expect(shouldArmAdmissionWatchdog(false, 'pending', 'durable')).toBe(false);
+  });
+
+  it('allows a location switch only from a fully confirmed safe state', () => {
+    expect(canSwitchOperationalLocation(true, 'saved', 'safe', false)).toBe(true);
+    expect(canSwitchOperationalLocation(false, 'saved', 'safe', false)).toBe(false);
+    expect(canSwitchOperationalLocation(true, 'saving', 'securing', false)).toBe(false);
+    expect(canSwitchOperationalLocation(true, 'pending', 'durable', false)).toBe(false);
+    expect(canSwitchOperationalLocation(true, 'saved', 'blocked', false)).toBe(false);
+    expect(canSwitchOperationalLocation(true, 'saved', 'safe', true)).toBe(false);
   });
 });

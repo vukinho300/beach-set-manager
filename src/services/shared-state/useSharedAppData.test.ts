@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { SharedStateControllerState } from './sharedStateController';
 import {
-  scopeSharedStateToAuthenticatedUser,
+  scopeSharedStateToSelection,
   admitSharedUpdateForBinding,
   type UserScopedSharedState,
 } from './useSharedAppData';
@@ -25,6 +25,7 @@ describe('authenticated-user shared-state scoping', () => {
   it('rejects a visible mutation explicitly when no controller binding exists', () => {
     expect(admitSharedUpdateForBinding(
       'user-a',
+      'location-a',
       null,
       { owner: 'visible-local-change' },
       1,
@@ -38,7 +39,8 @@ describe('authenticated-user shared-state scoping', () => {
     const update = vi.fn();
     expect(admitSharedUpdateForBinding(
       'user-b',
-      { userId: 'user-a', controller: { update } },
+      'location-a',
+      { userId: 'user-a', locationId: 'location-a', controller: { update } },
       { owner: 'user-b' },
       2,
     )).toEqual({
@@ -48,13 +50,29 @@ describe('authenticated-user shared-state scoping', () => {
     expect(update).not.toHaveBeenCalled();
   });
 
+  it('rejects a location-mismatched controller instead of crossing locations', () => {
+    const update = vi.fn();
+    expect(admitSharedUpdateForBinding(
+      'user-a',
+      'koversada',
+      { userId: 'user-a', locationId: 'petalon', controller: { update } },
+      { owner: 'visible-koversada-change' },
+      3,
+    )).toEqual({
+      status: 'rejected',
+      reason: 'location_mismatch',
+    });
+    expect(update).not.toHaveBeenCalled();
+  });
+
   it('exposes ready shared data only to the user identity that loaded it', () => {
     const userAState: UserScopedSharedState<TestData> = {
       userId: 'user-a',
+      locationId: 'petalon',
       state: ready('user-a', 7),
     };
 
-    expect(scopeSharedStateToAuthenticatedUser('user-a', userAState)).toEqual(
+    expect(scopeSharedStateToSelection('user-a', 'petalon', userAState)).toEqual(
       ready('user-a', 7),
     );
   });
@@ -62,10 +80,11 @@ describe('authenticated-user shared-state scoping', () => {
   it('synchronously stops exposing the previous user state on sign-out', () => {
     const userAState: UserScopedSharedState<TestData> = {
       userId: 'user-a',
+      locationId: 'petalon',
       state: ready('user-a', 7),
     };
 
-    expect(scopeSharedStateToAuthenticatedUser(null, userAState)).toEqual({
+    expect(scopeSharedStateToSelection(null, null, userAState)).toEqual({
       status: 'loading',
     });
   });
@@ -73,24 +92,27 @@ describe('authenticated-user shared-state scoping', () => {
   it('keeps User B loading until User B own repository load succeeds', () => {
     const userAState: UserScopedSharedState<TestData> = {
       userId: 'user-a',
+      locationId: 'petalon',
       state: ready('user-a', 7),
     };
     const userBLoading: UserScopedSharedState<TestData> = {
       userId: 'user-b',
+      locationId: 'petalon',
       state: { status: 'loading' },
     };
     const userBReady: UserScopedSharedState<TestData> = {
       userId: 'user-b',
+      locationId: 'petalon',
       state: ready('user-b', 8),
     };
 
-    expect(scopeSharedStateToAuthenticatedUser('user-b', userAState)).toEqual({
+    expect(scopeSharedStateToSelection('user-b', 'petalon', userAState)).toEqual({
       status: 'loading',
     });
-    expect(scopeSharedStateToAuthenticatedUser('user-b', userBLoading)).toEqual({
+    expect(scopeSharedStateToSelection('user-b', 'petalon', userBLoading)).toEqual({
       status: 'loading',
     });
-    expect(scopeSharedStateToAuthenticatedUser('user-b', userBReady)).toEqual(
+    expect(scopeSharedStateToSelection('user-b', 'petalon', userBReady)).toEqual(
       ready('user-b', 8),
     );
   });
@@ -98,10 +120,12 @@ describe('authenticated-user shared-state scoping', () => {
   it('exposes User B unavailable result without revealing User A cached data', () => {
     const userAState: UserScopedSharedState<TestData> = {
       userId: 'user-a',
+      locationId: 'petalon',
       state: ready('user-a', 7),
     };
     const userBUnavailable: UserScopedSharedState<TestData> = {
       userId: 'user-b',
+      locationId: 'petalon',
       state: {
         status: 'unavailable',
         phase: 'load',
@@ -110,11 +134,23 @@ describe('authenticated-user shared-state scoping', () => {
       },
     };
 
-    expect(scopeSharedStateToAuthenticatedUser('user-b', userAState)).toEqual({
+    expect(scopeSharedStateToSelection('user-b', 'petalon', userAState)).toEqual({
       status: 'loading',
     });
     expect(
-      scopeSharedStateToAuthenticatedUser('user-b', userBUnavailable),
+      scopeSharedStateToSelection('user-b', 'petalon', userBUnavailable),
     ).toEqual(userBUnavailable.state);
+  });
+
+  it('stops exposing Petalon immediately when Koversada is selected', () => {
+    const petalonState: UserScopedSharedState<TestData> = {
+      userId: 'mark',
+      locationId: 'petalon',
+      state: ready('petalon', 20),
+    };
+
+    expect(scopeSharedStateToSelection('mark', 'koversada', petalonState)).toEqual({
+      status: 'loading',
+    });
   });
 });

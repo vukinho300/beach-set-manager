@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MutableRefObject } from 'react';
 import { AuthStatusPage, LoginPage } from './components/auth/LoginPage';
 import {
@@ -41,16 +41,27 @@ import {
   createFreshSetPaymentDraft,
   getSetPaymentDraftAmount,
 } from './domain/setPaymentDraft';
-import { PETALON_LOCATION_ID } from './domain/petalon';
+import {
+  createCleanLocationAppData,
+  locationSupportsBeachOperations,
+  type LocationInterfaceProfile,
+  type LocationMetadata,
+} from './domain/location';
+import {
+  archiveTransactionsForDate,
+  calculateDailyRevenue,
+  getZagrebBusinessDate,
+} from './domain/revenue';
+import { isBackupForLocation } from './domain/locationBackup';
 import type { AuthenticatedUser } from './services/auth/authService';
 import { useAuthSession } from './services/auth/useAuthSession';
 import {
-  getPetalonCapabilities,
-  getPetalonRoleDisplayLabel,
-  type PetalonCapabilities,
-} from './services/membership/petalonCapabilities';
-import type { ActivePetalonMembership } from './services/membership/petalonMembership';
-import { usePetalonMembership } from './services/membership/usePetalonMembership';
+  getLocationCapabilities,
+  getLocationRoleDisplayLabel,
+  type LocationCapabilities,
+} from './services/location/locationCapabilities';
+import type { ActiveLocationMembership } from './services/location/locationMemberships';
+import { useLocationAccessSession } from './services/location/useLocationAccessSession';
 import {
   areSharedStatesEqual,
   type SharedDeviceSafety,
@@ -66,6 +77,7 @@ import {
 } from './services/shared-state/operationalAppDataBridge';
 import { useSharedAppData } from './services/shared-state/useSharedAppData';
 import {
+  canSwitchOperationalLocation,
   scheduleAdmissionWatchdog,
   shouldArmAdmissionWatchdog,
   shouldLockOperationalMutations,
@@ -80,6 +92,7 @@ import {
 } from './services/shared-state/preservedAppDataRecovery';
 import {
   clampScrollPosition,
+  getAllowedOperationalTabs,
   loadUiContinuity,
   retainVisibleScrollPosition,
   saveUiContinuity,
@@ -88,11 +101,16 @@ import {
   withScrollPosition,
   type OperationalTab,
 } from './services/ui/uiContinuity';
+import { OwnerRevenuePage } from './components/revenue/OwnerRevenuePage';
+import {
+  useOwnerRevenue,
+  type OwnerRevenueState,
+} from './services/revenue/useOwnerRevenue';
 import './App.css';
 
 type TabId = OperationalTab;
 type BeachShortcut = 'beach1' | 'beach2' | 'beds';
-type SettingsView = 'menu' | 'transactions' | 'report';
+type SettingsView = 'menu' | 'transactions' | 'report' | 'ownerRevenue';
 type DetailMode = 'actions' | 'reserved';
 type ActiveEditor =
   | { kind: 'set'; id: number }
@@ -117,8 +135,10 @@ type BeachAssignment = {
 };
 type BackupPayload = AppData & {
   app: 'Beach Set Manager';
-  version: 12;
+  version: 13;
   exportedAt: string;
+  locationId: string;
+  locationSlug: string;
 };
 
 const STATUS_ORDER: SetStatus[] = ['free', 'paid', 'reserved', 'left'];
@@ -771,23 +791,6 @@ function parseReportArchive(value: unknown): ArchivedDailyReport[] {
   }, []).sort((first, second) => second.date.localeCompare(first.date));
 }
 
-function archiveTransactionsForDate(
-  archive: ArchivedDailyReport[],
-  date: string | undefined,
-  transactions: Transaction[],
-): ArchivedDailyReport[] {
-  if (!date || !isLocalDateKey(date) || archive.some((report) => report.date === date)) return archive;
-
-  const report: ArchivedDailyReport = {
-    date,
-    archivedAt: new Date().toISOString(),
-    transactions: transactions.map((transaction) => ({ ...transaction })),
-  };
-
-  return [report, ...archive]
-    .sort((first, second) => second.date.localeCompare(first.date));
-}
-
 function addKnownReservationPaymentTransactions(transactions: Transaction[], reservations: BeachReservation[]): Transaction[] {
   const today = getLocalDateKey();
   const reservationTransactions = reservations
@@ -944,7 +947,10 @@ function migrateLegacyBeachReservations(
   };
 }
 
-function parseImportedAppData(value: unknown): AppData | null {
+function parseImportedAppData(
+  value: unknown,
+  profile: LocationInterfaceProfile = 'PETALON_FULL',
+): AppData | null {
   if (!value || typeof value !== 'object') {
     return null;
   }
@@ -960,6 +966,26 @@ function parseImportedAppData(value: unknown): AppData | null {
     transactions?: unknown;
     reportArchive?: unknown;
   };
+  if (profile === 'KOVERSADA_AQUAPARK') {
+    return {
+      sets: {} as BeachSetMap,
+      extraBeds: {} as ExtraBedMap,
+      beachReservations: [],
+      savedSurnames: [],
+      sunbedSales: [],
+      aquaparkEntries: parseAquaparkEntries(payload.aquaparkEntries),
+      transactions: parseTransactions(payload.transactions, payload.dailySales)
+        .filter((transaction) => transaction.type === 'aquapark'),
+      reportArchive: parseReportArchive(payload.reportArchive).map((report) => ({
+        ...report,
+        transactions: report.transactions.filter(
+          (transaction) => transaction.type === 'aquapark',
+        ),
+      })),
+      lastAutomaticResetDate: normalizeResetDate(payload.lastAutomaticResetDate),
+    };
+  }
+
   const sets = payload.sets ? parseSets(payload.sets) : parseSets(value);
 
   if (!sets) {
@@ -1270,11 +1296,16 @@ function getBeachReservations(
   );
 }
 
-function createBackupPayload(appData: AppData): BackupPayload {
+function createBackupPayload(
+  appData: AppData,
+  location: LocationMetadata,
+): BackupPayload {
   return {
     app: 'Beach Set Manager',
-    version: 12,
+    version: 13,
     exportedAt: new Date().toISOString(),
+    locationId: location.id,
+    locationSlug: location.slug,
     sets: appData.sets,
     extraBeds: appData.extraBeds,
     beachReservations: appData.beachReservations,
@@ -1299,6 +1330,8 @@ function OperationalApp({
   onLocalSafetyBlock,
   onRetrySecuringChange,
   membership,
+  memberships,
+  onSelectLocation,
   authenticatedUser,
   authActionError,
   signOutPending,
@@ -1314,18 +1347,32 @@ function OperationalApp({
   onAppDataChange: (nextState: AppData, mutationSequence?: number) => SharedUpdateAdmission;
   onLocalSafetyBlock: (mutationSequence?: number) => void;
   onRetrySecuringChange: () => SharedUpdateAdmission;
-  membership: ActivePetalonMembership;
+  membership: ActiveLocationMembership;
+  memberships: ActiveLocationMembership[];
+  onSelectLocation: (locationId: string) => void;
   authenticatedUser: AuthenticatedUser;
   authActionError: string | null;
   signOutPending: boolean;
   onSignOut: () => Promise<void>;
 }) {
   const capabilities = useMemo(
-    () => getPetalonCapabilities(membership.role),
-    [membership.role],
+    () => getLocationCapabilities(
+      membership.role,
+      membership.location.interfaceProfile,
+    ),
+    [membership.location.interfaceProfile, membership.role],
   );
   const [initialAppData] = useState(() => initializeAppDataForToday(sharedAppData));
-  const [initialContinuity] = useState(() => loadUiContinuity(window.localStorage));
+  const [initialContinuity] = useState(() => loadUiContinuity(
+    window.localStorage,
+    authenticatedUser.id,
+    membership.locationId,
+    membership.location.interfaceProfile,
+  ));
+  const allowedTabs = useMemo(
+    () => getAllowedOperationalTabs(membership.location.interfaceProfile),
+    [membership.location.interfaceProfile],
+  );
   const [sets, setSets] = useState<BeachSetMap>(() => initialAppData.sets);
   const [extraBeds, setExtraBeds] = useState<ExtraBedMap>(() => initialAppData.extraBeds);
   const [beachReservations, setBeachReservations] = useState<BeachReservation[]>(
@@ -1342,13 +1389,33 @@ function OperationalApp({
   );
   const [transactions, setTransactions] = useState<Transaction[]>(() => initialAppData.transactions);
   const [reportArchive, setReportArchive] = useState<ArchivedDailyReport[]>(() => initialAppData.reportArchive);
-  const [reservationsCollapsed, setReservationsCollapsed] = useState(() => window.localStorage.getItem('beach-reservations-collapsed') === 'true');
+  const reservationsCollapsedStorageKey = `beach-reservations-collapsed:${authenticatedUser.id}:${membership.locationId}`;
+  const [reservationsCollapsed, setReservationsCollapsed] = useState(
+    () => window.localStorage.getItem(reservationsCollapsedStorageKey) === 'true',
+  );
   const [currentTime, setCurrentTime] = useState(() => new Date());
   const [lastAutomaticResetDate, setLastAutomaticResetDate] = useState(
     () => initialAppData.lastAutomaticResetDate ?? getLocalDateKey(),
   );
   const [activeTab, setActiveTab] = useState<TabId>(() => initialContinuity.activeTab);
   const [settingsView, setSettingsView] = useState<SettingsView>('menu');
+  const [ownerBusinessDate, setOwnerBusinessDate] = useState(
+    () => getZagrebBusinessDate(),
+  );
+  const normalizeOwnerLocationState = useCallback((
+    value: unknown,
+    locationMembership: ActiveLocationMembership,
+  ) => parseImportedAppData(
+    value,
+    locationMembership.location.interfaceProfile,
+  ), []);
+  const ownerRevenue = useOwnerRevenue(
+    authenticatedUser.id,
+    memberships,
+    ownerBusinessDate,
+    capabilities.canManageRealRevenue && settingsView === 'ownerRevenue',
+    normalizeOwnerLocationState,
+  );
   const [activeEditor, setActiveEditor] = useState<ActiveEditor | null>(null);
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
   const [localSafetyStop, setLocalSafetyStop] = useState<{
@@ -1404,6 +1471,12 @@ function OperationalApp({
   const hasUnadmittedLocalDivergence = !visibleStateTrackedByController;
   const operationalMutationsLocked = shouldLockOperationalMutations(
     visibleStateTrackedByController,
+    sharedDeviceSafety,
+    localSafetyStop !== null,
+  );
+  const locationSwitchAllowed = canSwitchOperationalLocation(
+    localMatchesController,
+    sharedSyncStatus,
     sharedDeviceSafety,
     localSafetyStop !== null,
   );
@@ -1598,6 +1671,7 @@ function OperationalApp({
     await savePreservedRecoverySnapshot(
       preserved,
       authenticatedUser.id,
+      membership.location,
       sharedRevision,
       'hard-stop',
     );
@@ -1626,8 +1700,11 @@ function OperationalApp({
   }, [transactions]);
 
   useEffect(() => {
-    window.localStorage.setItem('beach-reservations-collapsed', String(reservationsCollapsed));
-  }, [reservationsCollapsed]);
+    window.localStorage.setItem(
+      reservationsCollapsedStorageKey,
+      String(reservationsCollapsed),
+    );
+  }, [reservationsCollapsed, reservationsCollapsedStorageKey]);
 
   useEffect(() => {
     function persistCurrentScroll() {
@@ -1639,7 +1716,12 @@ function OperationalApp({
         activeTabRef.current,
         lastVisibleScrollYRef.current,
       );
-      saveUiContinuity(window.localStorage, continuityRef.current);
+      saveUiContinuity(
+        window.localStorage,
+        authenticatedUser.id,
+        membership.locationId,
+        continuityRef.current,
+      );
     }
 
     function scheduleScrollPersistence() {
@@ -1698,7 +1780,7 @@ function OperationalApp({
       document.removeEventListener('visibilitychange', persistOnVisibilityChange);
       window.history.scrollRestoration = previousScrollRestoration;
     };
-  }, []);
+  }, [authenticatedUser.id, membership.locationId]);
 
   useEffect(() => {
     // Installed PWAs may honor this lock; browsers that do not retain the compact portrait CSS layout.
@@ -1815,6 +1897,9 @@ function OperationalApp({
   }
 
   function selectTab(tabId: TabId, restorePosition = true) {
+    if (!allowedTabs.includes(tabId)) {
+      return;
+    }
     cancelScheduledScrollRestore();
     if (scrollWriteTimerRef.current !== null) {
       window.clearTimeout(scrollWriteTimerRef.current);
@@ -1831,7 +1916,12 @@ function OperationalApp({
       ),
     );
     continuityRef.current = withActiveTab(continuityRef.current, tabId);
-    saveUiContinuity(window.localStorage, continuityRef.current);
+    saveUiContinuity(
+      window.localStorage,
+      authenticatedUser.id,
+      membership.locationId,
+      continuityRef.current,
+    );
     activeTabRef.current = tabId;
     lastVisibleScrollYRef.current = continuityRef.current.scrollPositions[tabId];
     setActiveTab(tabId);
@@ -2324,22 +2414,22 @@ function OperationalApp({
   function exportBackup() {
     const today = new Date().toISOString().slice(0, 10);
     const payload = createBackupPayload({
-      sets,
-      extraBeds,
-      beachReservations,
-      savedSurnames,
-      sunbedSales,
-      aquaparkEntries,
-      transactions,
-      reportArchive,
-      lastAutomaticResetDate,
-    });
+        sets,
+        extraBeds,
+        beachReservations,
+        savedSurnames,
+        sunbedSales,
+        aquaparkEntries,
+        transactions,
+        reportArchive,
+        lastAutomaticResetDate,
+      }, membership.location);
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement('a');
 
     link.href = url;
-    link.download = `beach-sets-backup-${today}.json`;
+    link.download = `${membership.location.slug}-backup-${today}.json`;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -2358,7 +2448,17 @@ function OperationalApp({
     }
 
     try {
-      const imported = parseImportedAppData(JSON.parse(await file.text()));
+      const raw: unknown = JSON.parse(await file.text());
+      if (!isBackupForLocation(raw, membership.location)) {
+        setBackupMessage(
+          `Import rejected: choose a ${membership.location.name} backup. Cross-location restore is not allowed.`,
+        );
+        return;
+      }
+      const imported = parseImportedAppData(
+        raw,
+        membership.location.interfaceProfile,
+      );
 
       if (!imported) {
         setBackupMessage('Import failed: this backup file is not valid for Beach Set Manager.');
@@ -2366,7 +2466,7 @@ function OperationalApp({
       }
 
       const confirmed = window.confirm(
-        'Import this backup and replace the current shared Petalon data? Other signed-in users will receive it automatically after it saves.',
+        `Import this backup and replace the current shared ${membership.location.name} data? Other signed-in users at this location will receive it automatically after it saves.`,
       );
 
       if (confirmed) {
@@ -2396,8 +2496,8 @@ function OperationalApp({
 
   function resetDay() {
     const confirmed = window.confirm(
-      [
-        'Daily Reset will update all 56 sets, 4 extra beds, and the current-day sales report.',
+      locationSupportsBeachOperations(membership.location.interfaceProfile) ? [
+        `Daily Reset will update ${membership.location.name}'s 56 sets, 4 extra beds, and current-day sales report.`,
         '',
         '- Paid sets and beds become free.',
         '- Partial sets become free.',
@@ -2406,6 +2506,13 @@ function OperationalApp({
         '- Non-numbered Sunbed sales are cleared.',
         '- The current Daily Report is saved in Report Archive.',
         '- Current-day recorded sales are then cleared for the new report.',
+        '',
+        'Continue?',
+      ].join('\n') : [
+        `Daily Reset will close ${membership.location.name}'s current business day.`,
+        '',
+        '- The current Aquapark report is saved in Report Archive.',
+        '- Current-day Aquapark transactions are cleared for the new report.',
         '',
         'Continue?',
       ].join('\n'),
@@ -2418,11 +2525,13 @@ function OperationalApp({
 
   function resetAppData() {
     const typed = window.prompt(
-      'Danger: this clears the shared Petalon operational data for every signed-in user. Type RESET to continue.',
+      `Danger: this clears the shared ${membership.location.name} operational data for every signed-in user at this location. Type RESET to continue.`,
     );
 
     if (typed === 'RESET') {
-      const defaults = createDefaultAppData();
+      const defaults = createCleanLocationAppData(
+        membership.location.interfaceProfile,
+      );
       setSets(defaults.sets);
       setExtraBeds(defaults.extraBeds);
       setBeachReservations(defaults.beachReservations);
@@ -2436,13 +2545,17 @@ function OperationalApp({
       lastAutomaticResetDateRef.current = today;
       setLastAutomaticResetDate(today);
       closeEditor();
-      setBackupMessage('Shared Petalon app data reset; saving...');
+      setBackupMessage(`Shared ${membership.location.name} app data reset; saving...`);
     }
   }
 
   return (
     <main className={`app-shell tab-${activeTab}${activeTab === 'beaches' ? ' beaches-active' : ''}${operationalMutationsLocked ? ' operational-mutations-locked' : ''}`}>
-      <TopNavigation activeTab={activeTab} onSelectTab={selectTab} />
+      <TopNavigation
+        activeTab={activeTab}
+        allowedTabs={allowedTabs}
+        onSelectTab={selectTab}
+      />
       <div
         className={`shared-sync-status shared-sync-${displayedSyncStatus} shared-device-${displayedDeviceSafety} shared-refresh-${sharedRefreshStatus}`}
         role={displayedDeviceSafety === 'blocked' ? 'alert' : 'status'}
@@ -2504,11 +2617,19 @@ function OperationalApp({
           onDeleteSurname={deleteSavedSurname}
           onShowTransactions={() => setSettingsView('transactions')}
           onShowReport={() => setSettingsView('report')}
+          onShowOwnerRevenue={() => setSettingsView('ownerRevenue')}
           onBackToSettings={() => setSettingsView('menu')}
           transactions={transactions}
           reportArchive={reportArchive}
           onDeleteTransaction={deleteTransaction}
           membership={membership}
+          memberships={memberships}
+          canSwitchLocation={locationSwitchAllowed}
+          onSelectLocation={(locationId) => {
+            if (locationSwitchAllowed) {
+              onSelectLocation(locationId);
+            }
+          }}
           capabilities={capabilities}
           authenticatedUser={authenticatedUser}
           authActionError={authActionError}
@@ -2526,6 +2647,10 @@ function OperationalApp({
             lastAutomaticResetDate,
           }}
           sharedRevision={sharedRevision}
+          ownerRevenueState={ownerRevenue.state}
+          ownerBusinessDate={ownerBusinessDate}
+          onOwnerBusinessDateChange={setOwnerBusinessDate}
+          onSaveRealRevenue={ownerRevenue.save}
         />
       ) : (
         <>
@@ -3333,33 +3458,8 @@ function AquaparkEntryCard({
   );
 }
 
-function getTransactionQuantity(transaction: Transaction): number {
-  return typeof transaction.metadata?.quantity === 'number' ? transaction.metadata.quantity : 0;
-}
-
 function getTransactionWristbands(transaction: Transaction): number {
   return typeof transaction.metadata?.wristbandCount === 'number' ? transaction.metadata.wristbandCount : 0;
-}
-
-function getDailyReport(transactions: Transaction[]) {
-  const forType = (type: TransactionType) => transactions.filter((transaction) => isActiveTransaction(transaction) && transaction.type === type);
-  const beachSales = forType('beach_set');
-  const bedSales = forType('bed');
-  const sunbedSales = forType('sunbed');
-  const reservationPayments = forType('beach_reservation');
-  const aquaparkSales = forType('aquapark');
-  const totalFor = (items: Transaction[]) => items.reduce((total, item) => total + item.amount, 0);
-  const ticketBreakdown = (Object.keys(AQUAPARK_TICKETS) as AquaparkTicketType[]).map((ticketType) => {
-    const items = aquaparkSales.filter((item) => item.metadata?.ticketType === ticketType);
-    return { ticketType, wristbandCount: items.reduce((total, item) => total + getTransactionWristbands(item), 0), total: totalFor(items) };
-  });
-  const beachTotal = totalFor(beachSales);
-  const bedTotal = totalFor(bedSales);
-  const sunbedTotal = totalFor(sunbedSales);
-  const reservationTotal = totalFor(reservationPayments);
-  const aquaparkTotal = totalFor(aquaparkSales);
-  const sunbedsSectionTotal = beachTotal + bedTotal + sunbedTotal + reservationTotal;
-  return { beachSales, bedSales, sunbedSales, reservationPayments, aquaparkSales, beachTotal, bedTotal, sunbedTotal, reservationTotal, aquaparkTotal, sunbedsSectionTotal, total: sunbedsSectionTotal + aquaparkTotal, sunbedQuantity: sunbedSales.reduce((total, sale) => total + getTransactionQuantity(sale), 0), wristbandCount: aquaparkSales.reduce((total, sale) => total + getTransactionWristbands(sale), 0), ticketBreakdown };
 }
 
 function formatReportDate(dateKey: string) {
@@ -3368,7 +3468,7 @@ function formatReportDate(dateKey: string) {
     .format(new Date(year, month - 1, day));
 }
 
-function ReportsPage({ transactions, reportArchive }: { transactions: Transaction[]; reportArchive: ArchivedDailyReport[] }) {
+function ReportsPage({ transactions, reportArchive, profile }: { transactions: Transaction[]; reportArchive: ArchivedDailyReport[]; profile: LocationInterfaceProfile }) {
   const [selectedDate, setSelectedDate] = useState<string>('today');
   const selectedArchive = reportArchive.find((report) => report.date === selectedDate);
   const reportTransactions = selectedArchive?.transactions ?? transactions;
@@ -3394,13 +3494,17 @@ function ReportsPage({ transactions, reportArchive }: { transactions: Transactio
         </div>
         {!reportArchive.length ? <p className="report-empty">Previous daily reports will appear here after Daily Reset.</p> : null}
       </section>
-      <DailyReport transactions={reportTransactions} date={reportDate} archived={Boolean(selectedArchive)} />
+      <DailyReport transactions={reportTransactions} date={reportDate} archived={Boolean(selectedArchive)} profile={profile} />
     </div>
   );
 }
 
-function DailyReport({ transactions, date, archived = false }: { transactions: Transaction[]; date: string; archived?: boolean }) {
-  const report = useMemo(() => getDailyReport(transactions), [transactions]);
+function DailyReport({ transactions, date, profile, archived = false }: { transactions: Transaction[]; date: string; profile: LocationInterfaceProfile; archived?: boolean }) {
+  const report = useMemo(
+    () => calculateDailyRevenue(transactions, profile),
+    [profile, transactions],
+  );
+  const includesBeachOperations = locationSupportsBeachOperations(profile);
 
   return (
     <section className="daily-report-page" aria-labelledby="daily-report-heading">
@@ -3412,13 +3516,13 @@ function DailyReport({ transactions, date, archived = false }: { transactions: T
           <span>Total</span>
           <strong>{formatEuro(report.total)}</strong>
         </div>
-        <div className="report-summary-grid">
-          <span>Sunbeds<strong>{formatEuro(report.sunbedsSectionTotal)}</strong><small>{report.beachSales.length + report.bedSales.length + report.sunbedSales.length + report.reservationPayments.length} records</small></span>
+        <div className={`report-summary-grid${includesBeachOperations ? '' : ' aquapark-only'}`}>
+          {includesBeachOperations ? <span>Sunbeds<strong>{formatEuro(report.sunbedsSectionTotal)}</strong><small>{report.beachSales.length + report.bedSales.length + report.sunbedSales.length + report.reservationPayments.length} records</small></span> : null}
           <span>Aquapark<strong>{formatEuro(report.aquaparkTotal)}</strong><small>{report.wristbandCount} wristbands</small></span>
         </div>
       </header>
 
-      <section className="report-group report-group-sunbeds" aria-labelledby="sunbeds-group-heading">
+      {includesBeachOperations ? <section className="report-group report-group-sunbeds" aria-labelledby="sunbeds-group-heading">
         <div className="report-group-heading">
           <div><p className="eyebrow">Beach operation</p><h3 id="sunbeds-group-heading">Sunbeds</h3></div>
           <strong>{formatEuro(report.sunbedsSectionTotal)}</strong>
@@ -3493,7 +3597,7 @@ function DailyReport({ transactions, date, archived = false }: { transactions: T
           </div>
         ) : <p className="report-empty">No current-day non-numbered Sunbed sales recorded.</p>}
       </section>
-      </section>
+      </section> : null}
 
       <section className="report-group report-group-aquapark" aria-labelledby="aquapark-group-heading">
         <div className="report-group-heading">
@@ -3556,9 +3660,11 @@ function TransactionsPage({ transactions, onDelete }: { transactions: Transactio
 
 function TopNavigation({
   activeTab,
+  allowedTabs,
   onSelectTab,
 }: {
   activeTab: TabId;
+  allowedTabs: TabId[];
   onSelectTab: (tabId: TabId) => void;
 }) {
   const tabs: Array<{ id: TabId; label: string }> = [
@@ -3570,7 +3676,7 @@ function TopNavigation({
 
   return (
     <nav className="top-navigation" aria-label="Main app sections">
-      {tabs.map((tab) => (
+      {tabs.filter((tab) => allowedTabs.includes(tab.id)).map((tab) => (
         <button
           type="button"
           className={`top-navigation-button tab-${tab.id}${activeTab === tab.id ? ' active' : ''}`}
@@ -3600,10 +3706,12 @@ type DeviceRecoveryFinding = {
 
 function DeviceRecoverySection({
   authenticatedUserId,
+  location,
   current,
   sharedRevision,
 }: {
   authenticatedUserId: string;
+  location: LocationMetadata;
   current: AppData;
   sharedRevision: number;
 }) {
@@ -3626,8 +3734,8 @@ function DeviceRecoverySection({
     try {
       const snapshots = await scanDeviceRecoverySnapshots(
         authenticatedUserId,
-        PETALON_LOCATION_ID,
-        parseImportedAppData,
+        location.id,
+        (value) => parseImportedAppData(value, location.interfaceProfile),
       );
       setFindings(snapshots.map((snapshot) => ({
         snapshot,
@@ -3664,6 +3772,7 @@ function DeviceRecoverySection({
               onClick={() => void savePreservedRecoverySnapshot(
                 finding.snapshot.data,
                 authenticatedUserId,
+                location,
                 finding.snapshot.serverRevision,
                 finding.snapshot.source,
               )}
@@ -3683,7 +3792,7 @@ function DeviceRecoverySection({
   );
 }
 
-function SettingsPage({ view, backupMessage, importInputRef, savedSurnames, onDailyReset, onExport, onImport, onImportFile, onResetAppData, onDeleteSurname, onShowTransactions, onShowReport, onBackToSettings, transactions, reportArchive, onDeleteTransaction, membership, capabilities, authenticatedUser, authActionError, signOutPending, onSignOut, currentAppData, sharedRevision }: {
+function SettingsPage({ view, backupMessage, importInputRef, savedSurnames, onDailyReset, onExport, onImport, onImportFile, onResetAppData, onDeleteSurname, onShowTransactions, onShowReport, onShowOwnerRevenue, onBackToSettings, transactions, reportArchive, onDeleteTransaction, membership, memberships, canSwitchLocation, onSelectLocation, capabilities, authenticatedUser, authActionError, signOutPending, onSignOut, currentAppData, sharedRevision, ownerRevenueState, ownerBusinessDate, onOwnerBusinessDateChange, onSaveRealRevenue }: {
   view: SettingsView;
   backupMessage: string | null;
   importInputRef: MutableRefObject<HTMLInputElement | null>;
@@ -3696,38 +3805,52 @@ function SettingsPage({ view, backupMessage, importInputRef, savedSurnames, onDa
   onDeleteSurname: (surname: string) => void;
   onShowTransactions: () => void;
   onShowReport: () => void;
+  onShowOwnerRevenue: () => void;
   onBackToSettings: () => void;
   transactions: Transaction[];
   reportArchive: ArchivedDailyReport[];
   onDeleteTransaction: (transactionId: string) => void;
-  membership: ActivePetalonMembership;
-  capabilities: PetalonCapabilities;
+  membership: ActiveLocationMembership;
+  memberships: ActiveLocationMembership[];
+  canSwitchLocation: boolean;
+  onSelectLocation: (locationId: string) => void;
+  capabilities: LocationCapabilities;
   authenticatedUser: AuthenticatedUser;
   authActionError: string | null;
   signOutPending: boolean;
   onSignOut: () => Promise<void>;
   currentAppData: AppData;
   sharedRevision: number;
+  ownerRevenueState: OwnerRevenueState;
+  ownerBusinessDate: string;
+  onOwnerBusinessDateChange: (date: string) => void;
+  onSaveRealRevenue: (locationId: string, realRevenue: number) => Promise<boolean>;
 }) {
   if (view === 'transactions') {
     return <section className="settings-subpage"><button type="button" className="settings-back" onClick={onBackToSettings}>Back to Settings</button><TransactionsPage transactions={transactions} onDelete={onDeleteTransaction} /></section>;
   }
   if (view === 'report') {
-    return <section className="settings-subpage"><button type="button" className="settings-back" onClick={onBackToSettings}>Back to Settings</button><ReportsPage transactions={transactions} reportArchive={reportArchive} /></section>;
+    return <section className="settings-subpage"><button type="button" className="settings-back" onClick={onBackToSettings}>Back to Settings</button><ReportsPage transactions={transactions} reportArchive={reportArchive} profile={membership.location.interfaceProfile} /></section>;
+  }
+
+  if (view === 'ownerRevenue' && capabilities.canManageRealRevenue) {
+    return <section className="settings-subpage"><button type="button" className="settings-back" onClick={onBackToSettings}>Back to Settings</button><OwnerRevenuePage state={ownerRevenueState} memberships={memberships} businessDate={ownerBusinessDate} onBusinessDateChange={onOwnerBusinessDateChange} onSave={onSaveRealRevenue} /></section>;
   }
   return <section className="settings-page" aria-labelledby="settings-heading">
-    <header className="report-hero"><p className="eyebrow">Shared Petalon controls</p><h2 id="settings-heading">Settings</h2></header>
+    <header className="report-hero"><p className="eyebrow">Shared {membership.location.name} controls</p><h2 id="settings-heading">Settings</h2></header>
+    <section className="settings-section settings-location"><h3>Location</h3><p>Current location: <strong>{membership.location.name}</strong></p>{memberships.length > 1 ? <div className="settings-location-options" role="group" aria-label="Operational location">{memberships.map((candidate) => <button type="button" className={candidate.locationId === membership.locationId ? 'active' : ''} disabled={!canSwitchLocation || candidate.locationId === membership.locationId} onClick={() => onSelectLocation(candidate.locationId)} key={candidate.locationId}>{candidate.location.name}</button>)}</div> : null}{memberships.length > 1 && !canSwitchLocation ? <p className="backup-message">Finish securing the current location before switching.</p> : null}</section>
     <DeviceRecoverySection
       authenticatedUserId={authenticatedUser.id}
+      location={membership.location}
       current={currentAppData}
       sharedRevision={sharedRevision}
     />
-    <section className="settings-section"><h3>Records</h3><div className="settings-menu-actions"><button type="button" className="tool-button" onClick={onShowTransactions}>Transactions</button><button type="button" className="tool-button" onClick={onShowReport}>Reports</button></div></section>
+    <section className="settings-section"><h3>Records</h3><div className="settings-menu-actions"><button type="button" className="tool-button" onClick={onShowTransactions}>Transactions</button><button type="button" className="tool-button" onClick={onShowReport}>Reports</button>{capabilities.canManageRealRevenue ? <button type="button" className="tool-button" onClick={onShowOwnerRevenue}>Real Revenue vs App Revenue</button> : null}</div></section>
     {capabilities.canRunDailyReset ? <section className="settings-section"><h3>Daily Reset</h3><p>Start a fresh shared business day and clear current-day sales.</p><button type="button" className="reset-button" onClick={onDailyReset}>Daily Reset</button></section> : null}
-    <section className="settings-section"><h3>Backups</h3><p>{capabilities.canUseDestructiveSharedTools ? 'Export the current shared Petalon state, or explicitly replace it by importing a compatible backup.' : 'Export the current shared Petalon state.'}</p><div className="tool-buttons">{capabilities.canExportBackup ? <button type="button" className="tool-button" onClick={onExport}>Export Backup</button> : null}{capabilities.canUseDestructiveSharedTools ? <button type="button" className="tool-button" onClick={onImport}>Import Backup</button> : null}</div>{capabilities.canUseDestructiveSharedTools ? <input ref={importInputRef} className="file-input" type="file" accept="application/json,.json" onChange={(event) => onImportFile(event.target.files?.[0])} /> : null}{backupMessage ? <p className="backup-message">{backupMessage}</p> : null}</section>
-    <section className="settings-section"><h3>Shared Tools</h3>{capabilities.canUseDestructiveSharedTools ? <button type="button" className="danger-link" onClick={onResetAppData}>Reset shared app data</button> : null}<SavedSurnamesManager savedSurnames={savedSurnames} onDeleteSurname={onDeleteSurname} /></section>
-    <section className="settings-section settings-account"><h3>Account</h3><p className="account-role">{getPetalonRoleDisplayLabel(membership.role)}</p><p>Signed in as <strong>{authenticatedUser.email || 'Authenticated user'}</strong></p><button type="button" className="sign-out-button" disabled={signOutPending} onClick={() => void onSignOut()}>{signOutPending ? 'Signing out…' : 'Sign out'}</button>{authActionError ? <p className="auth-error settings-auth-error" role="alert">{authActionError}</p> : null}</section>
-    <section className="settings-about" aria-label="About"><span>About</span><strong>Built for Camp Petalon</strong></section>
+    <section className="settings-section"><h3>Backups</h3><p>{capabilities.canUseDestructiveSharedTools ? `Export the current shared ${membership.location.name} state, or explicitly replace it with a matching ${membership.location.name} backup.` : `Export the current shared ${membership.location.name} state.`}</p><div className="tool-buttons">{capabilities.canExportBackup ? <button type="button" className="tool-button" onClick={onExport}>Export Backup</button> : null}{capabilities.canUseDestructiveSharedTools ? <button type="button" className="tool-button" onClick={onImport}>Import Backup</button> : null}</div>{capabilities.canUseDestructiveSharedTools ? <input ref={importInputRef} className="file-input" type="file" accept="application/json,.json" onChange={(event) => onImportFile(event.target.files?.[0])} /> : null}{backupMessage ? <p className="backup-message">{backupMessage}</p> : null}</section>
+    <section className="settings-section"><h3>Shared Tools</h3>{capabilities.canUseDestructiveSharedTools ? <button type="button" className="danger-link" onClick={onResetAppData}>Reset {membership.location.name} shared app data</button> : null}{locationSupportsBeachOperations(membership.location.interfaceProfile) ? <SavedSurnamesManager savedSurnames={savedSurnames} onDeleteSurname={onDeleteSurname} /> : null}</section>
+    <section className="settings-section settings-account"><h3>Account</h3><p><strong>Location:</strong> {membership.location.name}</p><p className="account-role">{getLocationRoleDisplayLabel(membership.role)}</p><p>Signed in as <strong>{authenticatedUser.email || 'Authenticated user'}</strong></p><button type="button" className="sign-out-button" disabled={signOutPending} onClick={() => void onSignOut()}>{signOutPending ? 'Signing out…' : 'Sign out'}</button>{authActionError ? <p className="auth-error settings-auth-error" role="alert">{authActionError}</p> : null}</section>
+    <section className="settings-about" aria-label="About"><span>About</span><strong>Beach Set Manager · {membership.location.name}</strong></section>
   </section>;
 }
 
@@ -4538,6 +4661,7 @@ function BedIcon() {
 async function savePreservedRecoverySnapshot(
   preserved: AppData,
   userId: string,
+  location: LocationMetadata,
   serverRevision: number | null,
   source = 'device',
 ) {
@@ -4545,19 +4669,19 @@ async function savePreservedRecoverySnapshot(
   const payload = createPreservedAppDataRecoveryFile(
     preserved,
     userId,
-    PETALON_LOCATION_ID,
+    location.id,
     serverRevision,
     exportedAt,
   );
   const file = new File(
     [JSON.stringify(payload, null, 2)],
-    `petalon-preserved-${source}-${exportedAt.slice(0, 19).replace(/[:T]/g, '-')}.json`,
+    `${location.slug}-preserved-${source}-${exportedAt.slice(0, 19).replace(/[:T]/g, '-')}.json`,
     { type: 'application/json' },
   );
 
   if (navigator.canShare?.({ files: [file] })) {
     try {
-      await navigator.share({ files: [file], title: 'Petalon preserved changes' });
+      await navigator.share({ files: [file], title: `${location.name} preserved changes` });
       return;
     } catch {
       // A cancelled/failed share can still use the download fallback below.
@@ -4579,11 +4703,13 @@ function PreservedChangesPanel({
   current,
   serverRevision,
   userId,
+  location,
 }: {
   preserved: AppData;
   current: AppData | null;
   serverRevision: number | null;
   userId: string;
+  location: LocationMetadata;
 }) {
   const financialActivity = findPreservedFinancialActivity(preserved, current);
   const total = financialActivity.reduce((sum, activity) => sum + activity.amount, 0);
@@ -4592,6 +4718,7 @@ function PreservedChangesPanel({
     await savePreservedRecoverySnapshot(
       preserved,
       userId,
+      location,
       serverRevision,
       'unsaved-app-data',
     );
@@ -4636,13 +4763,23 @@ function App() {
   const auth = useAuthSession();
   const authenticatedUserId =
     auth.state.status === 'authenticated' ? auth.state.user.id : null;
-  const membership = usePetalonMembership(authenticatedUserId);
-  const sharedUserId = membership.state.status === 'active'
-    ? membership.state.membership.userId
+  const locationAccess = useLocationAccessSession(authenticatedUserId);
+  const selectedMembership = locationAccess.state.status === 'active'
+    ? locationAccess.state.selected
     : null;
+  const selectedProfile = selectedMembership?.location.interfaceProfile ?? null;
+  const normalizeSelectedLocationState = useCallback(
+    (value: unknown) => selectedProfile
+      ? parseImportedAppData(value, selectedProfile)
+      : null,
+    [selectedProfile],
+  );
+  const sharedUserId = selectedMembership?.userId ?? null;
+  const selectedLocationId = selectedMembership?.locationId ?? null;
   const shared = useSharedAppData(
     sharedUserId,
-    parseImportedAppData,
+    selectedLocationId,
+    normalizeSelectedLocationState,
   );
 
   if (auth.state.status === 'initializing') {
@@ -4674,43 +4811,45 @@ function App() {
     );
   }
 
-  if (membership.state.status === 'loading') {
+  if (locationAccess.state.status === 'loading') {
     return (
       <AuthStatusPage
-        title="Loading Petalon access"
-        message="Checking your active Petalon membership and role..."
+        title="Loading location access"
+        message="Checking your active location memberships and role..."
         loading
       />
     );
   }
 
-  if (membership.state.status === 'inactive') {
+  if (locationAccess.state.status === 'inactive') {
     return (
       <AuthStatusPage
-        title="Petalon access inactive"
-        message="This account does not currently have active Petalon access."
+        title="Location access inactive"
+        message="This account does not currently have active location access."
         actionLabel="Sign out"
         onAction={() => void auth.signOut()}
       />
     );
   }
 
-  if (membership.state.status === 'unavailable') {
+  if (locationAccess.state.status === 'unavailable') {
     return (
       <AuthStatusPage
-        title="Petalon access unavailable"
-        message={membership.state.message}
+        title="Location access unavailable"
+        message={locationAccess.state.message}
         actionLabel="Retry membership"
-        onAction={membership.reload}
+        onAction={locationAccess.reload}
       />
     );
   }
 
+  const locationName = locationAccess.state.selected.location.name;
+
   if (shared.state.status === 'loading') {
     return (
       <AuthStatusPage
-        title="Loading shared Petalon data"
-        message="Checking your active Petalon access and loading the current operational state..."
+        title={`Loading shared ${locationName} data`}
+        message={`Checking your active ${locationName} access and loading its current operational state...`}
         loading
       />
     );
@@ -4719,8 +4858,8 @@ function App() {
   if (shared.state.status === 'not-found') {
     return (
       <AuthStatusPage
-        title="Shared Petalon data is not set up"
-        message="No operational state is available for Petalon. Local browser data was not used."
+        title={`Shared ${locationName} data is not set up`}
+        message={`No operational state is available for ${locationName}. Local browser data was not used.`}
         actionLabel="Retry shared data"
         onAction={() => void shared.reload()}
       />
@@ -4732,7 +4871,7 @@ function App() {
     return (
       <AuthStatusPage
         title="Newer shared data exists"
-        message={`Another user saved Petalon first${currentRevision === undefined ? '' : ` at revision ${currentRevision}`}. This device's unsaved changes remain safely preserved and will not overwrite the server automatically.`}
+        message={`Another user saved ${locationName} first${currentRevision === undefined ? '' : ` at revision ${currentRevision}`}. This device's unsaved changes remain safely preserved and will not overwrite the server automatically.`}
         actionLabel="Check shared data again"
         onAction={() => void shared.reload()}
       >
@@ -4741,6 +4880,7 @@ function App() {
           current={shared.state.current?.state ?? null}
           serverRevision={currentRevision ?? null}
           userId={auth.state.user.id}
+          location={locationAccess.state.selected.location}
         />
       </AuthStatusPage>
     );
@@ -4750,9 +4890,9 @@ function App() {
     const preservedLocal = shared.state.phase === 'save' ? shared.state.local : undefined;
     return (
       <AuthStatusPage
-        title="Shared Petalon data unavailable"
+        title={`Shared ${locationName} data unavailable`}
         message={shared.state.phase === 'save'
-          ? `${shared.state.message}${shared.state.pendingPreserved ? ' Unsaved changes remain preserved for this account on this device.' : ''}`
+          ? `${shared.state.message}${shared.state.pendingPreserved ? ' Unsaved changes remain preserved for this account and location on this device.' : ''}`
           : `${shared.state.message} Local browser data was not used.`}
         actionLabel="Retry shared access"
         onAction={() => void shared.reload()}
@@ -4763,6 +4903,7 @@ function App() {
             current={null}
             serverRevision={null}
             userId={auth.state.user.id}
+            location={locationAccess.state.selected.location}
           />
         ) : null}
       </AuthStatusPage>
@@ -4771,6 +4912,7 @@ function App() {
 
   return (
     <OperationalApp
+      key={`${auth.state.user.id}:${locationAccess.state.selected.locationId}`}
       sharedAppData={shared.state.data}
       sharedRevision={shared.state.revision}
       sharedSyncStatus={shared.state.syncStatus}
@@ -4781,7 +4923,9 @@ function App() {
       onAppDataChange={shared.update}
       onLocalSafetyBlock={shared.recordLocalSafetyBlock}
       onRetrySecuringChange={shared.retrySecuringChange}
-      membership={membership.state.membership}
+      membership={locationAccess.state.selected}
+      memberships={locationAccess.state.memberships}
+      onSelectLocation={locationAccess.selectLocation}
       authenticatedUser={auth.state.user}
       authActionError={auth.actionError}
       signOutPending={auth.signingOut}

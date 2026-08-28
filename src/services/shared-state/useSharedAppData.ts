@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AppData } from '../../domain/appData';
-import { PETALON_LOCATION_ID } from '../../domain/petalon';
 import type { SharedLocationStateRepository } from './repository';
 import { reconcileCompatibleBeachSetPendingState } from './appDataPendingRecovery';
 import {
@@ -14,7 +13,11 @@ import {
   type SharedUpdateAdmission,
 } from './sharedStateController';
 import { createSupabaseSharedLocationStateRepository } from './supabaseRepository';
-import { createClientSyncTelemetry } from './syncTelemetry';
+import {
+  createClientSyncTelemetry,
+  createNoopClientSyncTelemetry,
+  type ClientSyncTelemetry,
+} from './syncTelemetry';
 
 export type SharedAppDataSession = {
   state: SharedStateControllerState<AppData>;
@@ -27,16 +30,20 @@ export type SharedAppDataSession = {
 
 export type UserScopedSharedState<T> = {
   userId: string | null;
+  locationId: string | null;
   state: SharedStateControllerState<T>;
 };
 
 export type SharedControllerBinding<T> = {
   userId: string;
+  locationId: string;
   controller: Pick<SharedStateController<T>, 'update'>;
+  telemetry?: ClientSyncTelemetry;
 };
 
 export function admitSharedUpdateForBinding<T>(
   authenticatedUserId: string | null,
+  selectedLocationId: string | null,
   binding: SharedControllerBinding<T> | null,
   nextState: T,
   mutationSequence?: number,
@@ -47,22 +54,30 @@ export function admitSharedUpdateForBinding<T>(
   if (binding.userId !== authenticatedUserId) {
     return { status: 'rejected', reason: 'identity_mismatch' };
   }
+  if (binding.locationId !== selectedLocationId) {
+    return { status: 'rejected', reason: 'location_mismatch' };
+  }
   return binding.controller.update(nextState, mutationSequence);
 }
 
 const LOADING_SHARED_STATE = { status: 'loading' } as const;
 
-export function scopeSharedStateToAuthenticatedUser<T>(
+export function scopeSharedStateToSelection<T>(
   authenticatedUserId: string | null,
+  selectedLocationId: string | null,
   scopedState: UserScopedSharedState<T>,
 ): SharedStateControllerState<T> {
-  return authenticatedUserId && scopedState.userId === authenticatedUserId
+  return authenticatedUserId
+    && selectedLocationId
+    && scopedState.userId === authenticatedUserId
+    && scopedState.locationId === selectedLocationId
     ? scopedState.state
     : LOADING_SHARED_STATE;
 }
 
 export function useSharedAppData(
   authenticatedUserId: string | null,
+  selectedLocationId: string | null,
   normalize: NormalizeSharedState<AppData>,
   repository?: SharedLocationStateRepository<AppData>,
   pendingStore?: PendingSharedStateStore<AppData>,
@@ -70,54 +85,80 @@ export function useSharedAppData(
   const [configuration] = useState(() => ({
     repository: repository ?? createSupabaseSharedLocationStateRepository<AppData>(),
     pendingStore: pendingStore ?? createBrowserPendingSharedStateStore<AppData>(),
-    normalize,
-    telemetry: createClientSyncTelemetry(PETALON_LOCATION_ID),
   }));
   const controllerRef = useRef<{
     userId: string;
+    locationId: string;
     controller: SharedStateController<AppData>;
+    telemetry: ClientSyncTelemetry;
   } | null>(null);
-  const [scopedState, setScopedState] = useState<UserScopedSharedState<AppData>>(
-    {
-      userId: null,
-      state: LOADING_SHARED_STATE,
-    },
-  );
+  const telemetryRef = useRef<{
+    locationId: string;
+    telemetry: ClientSyncTelemetry;
+  } | null>(null);
+  const [scopedState, setScopedState] = useState<UserScopedSharedState<AppData>>({
+    userId: null,
+    locationId: null,
+    state: LOADING_SHARED_STATE,
+  });
   const mutationSequenceRef = useRef(0);
 
   useEffect(() => {
-    if (!authenticatedUserId) {
+    if (!authenticatedUserId || !selectedLocationId) {
       controllerRef.current = null;
-      setScopedState({ userId: null, state: LOADING_SHARED_STATE });
+      telemetryRef.current = null;
+      setScopedState({
+        userId: null,
+        locationId: null,
+        state: LOADING_SHARED_STATE,
+      });
       return;
     }
 
+    const telemetry = createClientSyncTelemetry(selectedLocationId);
+    const telemetryBinding = { locationId: selectedLocationId, telemetry };
+    telemetryRef.current = telemetryBinding;
     const controller = new SharedStateController(
       configuration.repository,
-      PETALON_LOCATION_ID,
-      configuration.normalize,
+      selectedLocationId,
+      normalize,
       {
         userId: authenticatedUserId,
         pendingStore: configuration.pendingStore,
         reconcilePendingState: reconcileCompatibleBeachSetPendingState,
-        telemetry: configuration.telemetry,
+        telemetry,
       },
     );
-    const binding = { userId: authenticatedUserId, controller };
+    const binding = {
+      userId: authenticatedUserId,
+      locationId: selectedLocationId,
+      controller,
+      telemetry,
+    };
     controllerRef.current = binding;
+    mutationSequenceRef.current = 0;
+    setScopedState({
+      userId: authenticatedUserId,
+      locationId: selectedLocationId,
+      state: LOADING_SHARED_STATE,
+    });
     const unsubscribe = controller.observe((state) => {
       if (controllerRef.current === binding) {
-        setScopedState({ userId: authenticatedUserId, state });
+        setScopedState({
+          userId: authenticatedUserId,
+          locationId: selectedLocationId,
+          state,
+        });
       }
     });
     controller.activate();
-    configuration.telemetry.record({ eventCode: 'APP_BOOT' });
+    telemetry.record({ eventCode: 'APP_BOOT' });
     void controller.reload();
 
     const handleResume = () => controller.resume();
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        configuration.telemetry.record({ eventCode: 'VISIBILITY_RESUME' });
+        telemetry.record({ eventCode: 'VISIBILITY_RESUME' });
         controller.resume();
       }
     };
@@ -134,61 +175,61 @@ export function useSharedAppData(
       if (controllerRef.current === binding) {
         controllerRef.current = null;
       }
+      if (telemetryRef.current === telemetryBinding) {
+        telemetryRef.current = null;
+      }
     };
-  }, [authenticatedUserId, configuration]);
+  }, [authenticatedUserId, configuration, normalize, selectedLocationId]);
 
   const update = useCallback(
     (nextState: AppData, suppliedMutationSequence?: number): SharedUpdateAdmission => {
       const binding = controllerRef.current;
+      const telemetry = binding?.telemetry
+        ?? (telemetryRef.current?.locationId === selectedLocationId
+          ? telemetryRef.current.telemetry
+          : createNoopClientSyncTelemetry());
       const mutationSequence = suppliedMutationSequence ?? ++mutationSequenceRef.current;
-      configuration.telemetry.record({ eventCode: 'BRIDGE_FORWARDED', mutationSequence });
-      if (!binding) {
-        configuration.telemetry.record({
-          eventCode: 'CONTROLLER_REJECTED',
-          mutationSequence,
-          errorCategory: 'controller_unavailable',
-        });
-        return admitSharedUpdateForBinding(
-          authenticatedUserId,
-          binding,
-          nextState,
-          mutationSequence,
-        );
-      }
-      if (binding.userId !== authenticatedUserId) {
-        configuration.telemetry.record({
-          eventCode: 'CONTROLLER_REJECTED',
-          mutationSequence,
-          errorCategory: 'identity_mismatch',
-        });
-        return admitSharedUpdateForBinding(
-          authenticatedUserId,
-          binding,
-          nextState,
-          mutationSequence,
-        );
-      }
-      return admitSharedUpdateForBinding(
+      telemetry.record({ eventCode: 'BRIDGE_FORWARDED', mutationSequence });
+      const admission = admitSharedUpdateForBinding(
         authenticatedUserId,
+        selectedLocationId,
         binding,
         nextState,
         mutationSequence,
       );
+      if (admission.status === 'rejected' && (
+        admission.reason === 'controller_unavailable'
+        || admission.reason === 'identity_mismatch'
+        || admission.reason === 'location_mismatch'
+      )) {
+        telemetry.record({
+          eventCode: 'CONTROLLER_REJECTED',
+          mutationSequence,
+          errorCategory: admission.reason,
+        });
+      }
+      return admission;
     },
-    [authenticatedUserId, configuration],
+    [authenticatedUserId, selectedLocationId],
   );
+
   const noteVisibleMutation = useCallback(() => {
     const mutationSequence = ++mutationSequenceRef.current;
-    configuration.telemetry.record({ eventCode: 'MUTATION_VISIBLE', mutationSequence });
+    (controllerRef.current?.telemetry ?? telemetryRef.current?.telemetry)?.record({
+      eventCode: 'MUTATION_VISIBLE',
+      mutationSequence,
+    });
     return mutationSequence;
-  }, [configuration]);
+  }, []);
+
   const recordLocalSafetyBlock = useCallback((mutationSequence?: number) => {
-    configuration.telemetry.record({
+    (controllerRef.current?.telemetry ?? telemetryRef.current?.telemetry)?.record({
       eventCode: 'CONTROLLER_BLOCKED',
       mutationSequence,
       errorCategory: 'admission_timeout',
     });
-  }, [configuration]);
+  }, []);
+
   const retrySecuringChange = useCallback((): SharedUpdateAdmission => {
     const binding = controllerRef.current;
     if (!binding) {
@@ -197,22 +238,26 @@ export function useSharedAppData(
     if (binding.userId !== authenticatedUserId) {
       return { status: 'rejected', reason: 'identity_mismatch' };
     }
+    if (binding.locationId !== selectedLocationId) {
+      return { status: 'rejected', reason: 'location_mismatch' };
+    }
     return binding.controller.retrySecuringChange();
-  }, [authenticatedUserId]);
+  }, [authenticatedUserId, selectedLocationId]);
+
   const reload = useCallback(() => {
     const binding = controllerRef.current;
     return binding?.userId === authenticatedUserId
+      && binding.locationId === selectedLocationId
       ? binding.controller.reload()
       : Promise.resolve();
-  }, [authenticatedUserId]);
-
-  const state = scopeSharedStateToAuthenticatedUser(
-    authenticatedUserId,
-    scopedState,
-  );
+  }, [authenticatedUserId, selectedLocationId]);
 
   return {
-    state,
+    state: scopeSharedStateToSelection(
+      authenticatedUserId,
+      selectedLocationId,
+      scopedState,
+    ),
     noteVisibleMutation,
     update,
     recordLocalSafetyBlock,

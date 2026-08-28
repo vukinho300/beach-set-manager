@@ -27,7 +27,7 @@ export type UnsubscribeAuth = () => void;
 
 export interface AuthService {
   observe(listener: AuthStateListener): UnsubscribeAuth;
-  signIn(email: string, password: string): Promise<AuthSignInResult>;
+  signIn(identifier: string, password: string): Promise<AuthSignInResult>;
   signOut(): Promise<AuthSignOutResult>;
 }
 
@@ -36,7 +36,7 @@ const CONFIGURATION_UNAVAILABLE_MESSAGE =
 const INITIALIZATION_UNAVAILABLE_MESSAGE =
   'Authentication is temporarily unavailable. Please reload and try again.';
 const SIGN_IN_FAILED_MESSAGE =
-  'Unable to sign in. Check your email and password and try again.';
+  'Unable to sign in. Check your email/username and password and try again.';
 const SIGN_OUT_FAILED_MESSAGE = 'Unable to sign out. Please try again.';
 
 function normalizeUser(user: User | null | undefined): AuthenticatedUser | null {
@@ -110,12 +110,12 @@ class SupabaseAuthService implements AuthService {
     };
   }
 
-  signIn(email: string, password: string): Promise<AuthSignInResult> {
+  signIn(identifier: string, password: string): Promise<AuthSignInResult> {
     if (this.signInInFlight) {
       return this.signInInFlight;
     }
 
-    const request = this.performSignIn(email, password);
+    const request = this.performSignIn(identifier, password);
     this.signInInFlight = request;
     void request.finally(() => {
       if (this.signInInFlight === request) {
@@ -141,7 +141,7 @@ class SupabaseAuthService implements AuthService {
   }
 
   private async performSignIn(
-    email: string,
+    identifier: string,
     password: string,
   ): Promise<AuthSignInResult> {
     if (!this.client) {
@@ -149,8 +149,25 @@ class SupabaseAuthService implements AuthService {
     }
 
     try {
+      const normalizedIdentifier = identifier.trim();
+      let email = normalizedIdentifier;
+      if (!normalizedIdentifier.includes('@')) {
+        const username = normalizedIdentifier.toLowerCase();
+        if (!/^[a-z0-9][a-z0-9-]{2,31}$/.test(username)) {
+          return { status: 'failed', message: SIGN_IN_FAILED_MESSAGE };
+        }
+        const { data: resolvedEmail, error: resolutionError } = await this.client.rpc(
+          'resolve_login_username',
+          { p_username: username },
+        );
+        if (resolutionError || typeof resolvedEmail !== 'string' || !resolvedEmail) {
+          return { status: 'failed', message: SIGN_IN_FAILED_MESSAGE };
+        }
+        email = resolvedEmail;
+      }
+
       const { data, error } = await this.client.auth.signInWithPassword({
-        email: email.trim(),
+        email,
         password,
       });
       const user = normalizeUser(data.session?.user ?? data.user);
