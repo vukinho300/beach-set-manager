@@ -1,7 +1,7 @@
 # Implementation Roadmap
 
 Status: `prototype_decision`
-Last reviewed: 2026-08-28
+Last reviewed: 2026-08-29
 
 ## Completed shared foundation
 
@@ -23,24 +23,41 @@ Last reviewed: 2026-08-28
 
 13. ✅ **Production Reliability R2 — PR #25:** explicit admission, bounded durability, fail-closed unsafe writes, recovery export, pipeline telemetry and correct authoritative-Realtime/local-divergence classification. Merged and deployed 2026-08-27.
 
-14. ⚠️ **Second Incident — 2026-08-28:** normal concurrent Production operation proved that the whole-location CAS boundary can manufacture a conflict between unrelated business resources. Vuk's Aquapark wristband-return write and Vito's Set 13 payment both started from revision 443; Vuk's write became revision 444 and Vito's Set write returned an explicit conflict. R2 preserved Set 13 but the conflict state locked Vito out of the entire operational application.
+14. ⚠️ **Second Incident — 2026-08-28:** normal concurrent Production operation proved that the whole-location CAS boundary can manufacture a conflict between unrelated business resources. Vuk's Aquapark wristband-return write and Vito's Set 13 payment both started from revision 443; Vuk's write became revision 444 and Vito's Set write returned explicit conflict. R2 preserved Set 13 but the conflict state locked Vito out of the entire operational application.
 
-15. **Immediate conflict-correctness milestone:** define and implement a safe response to disjoint-resource concurrent operations. No blind whole-state overwrite. Conflict handling must preserve evidence while providing a practical resolution/resume path.
+15. ⚠️ **R2.1 PR #31 — first disjoint-conflict bridge:** merged and deployed after the Second Incident. It added a strict closed operation allowlist, one durable automatic rebase/retry, and no blind overwrite, but only when the explicit conflict's current revision was exactly `expected + 1`. This must not be marked as the completed reliability fix because field evidence immediately invalidated that assumption.
 
-16. **Reliability R3 — immediate priority:** move business actions toward immutable client operation IDs/outbox, idempotent authenticated server commands, append-only accepted-operation history and immutable/voidable financial records. Progressively narrow concurrency from one location revision toward resource/entity boundaries.
+16. ⚠️ **Third Incident — 2026-08-29:** deliberate real two-device reproduction on the PR #31 Production build. From base 521, Vito produced revision 522 (`Set 53 FREE -> FREE + updatedAt`) then revision 523 (`FREE -> LEFT`). Vuk's unrelated Aquapark close, still expecting 521, received conflict against 523. The +1 gate prevented R2.1 reconciliation entirely and the full conflict lockout returned.
 
-17. **R3 field verification:** simultaneously exercise independent domains from separate real devices, including Vuk Aquapark + Vito Sets/Beds/Sunbeds, repeated PWA lifecycle changes, ambiguous response/retry cases and genuine same-resource conflicts.
+17. ✅ **Incident 3 forensic/design correction:** the extra revision was traced to a Set source no-op, and multi-revision final-snapshot inference was judged unsafe without intermediate-history proof. The accepted bounded correction is source no-op suppression + strict server proof of a short monotonic revision chain + existing semantic allowlist + one durable rebase.
 
-18. **Layer 5 Owner Real Revenue vs App Revenue:** remain a boss-only detection/audit control. It does not replace Layers 1–4 write correctness or R3.
+18. 🟡 **R2.1 corrective PR #32 — reviewed, awaiting frontend merge/field gate:**
+
+- 268/268 tests pass;
+- 64/64 ordered safe two-controller operation-family races pass;
+- multi-revision and negative matrices pass;
+- 33/33 real local SQL integration checks pass;
+- Production migration `20260829135041_add_safe_revision_chain_verification` is applied and independently verified;
+- real Incident 3 history 521→523 proves compatible under the new history semantics;
+- explicit upgrade-compatible scoped discard/use-current recovery is implemented;
+- frontend still must be merged/deployed and tested on the already-conflicted iPhone.
+
+19. **R2.1 corrective field gate:** after PR #32 deployment, recover the preserved old iPhone conflict without clearing site data; then perform representative real two-device races across Set/Bed/Sunbed/Aquapark and inspect telemetry/history. Only then mark Incident 3 resolved and the bridge field-validated.
+
+20. **Reliability R3 — immediate next architecture after field gate:** move business actions toward immutable client operation IDs/outbox, idempotent authenticated server commands, append-only accepted-operation history and immutable/voidable financial records. Progressively narrow concurrency from one location revision toward resource/entity boundaries.
+
+21. **R3 field verification:** exercise independent domains from separate real devices, repeated PWA lifecycle changes, ambiguous response/retry cases and genuine same-resource conflicts.
+
+22. **Layer 5 Owner Real Revenue vs App Revenue:** remain a boss-only detection/audit control. It does not replace Layers 1–4 write correctness, R2.1 or R3.
 
 ## Multi-location track
 
-19. **Step 10 — Koversada / Multi-Location v1:** may proceed only after the Second Incident reliability gate is satisfied and must not weaken any Never-Again Rule.
-20. Koversada initial interface: Aquapark + Settings only; same app/link/Supabase project; own location state and RLS memberships.
-21. Koversada access: Koversada Worker operates Koversada; Vuk and Mark can monitor/manage both Petalon and Koversada; Vito remains Petalon-only.
-22. Koversada must support multiple independent Worker Auth users next season. Two workers using one location simultaneously plus Vuk/Mark monitoring is a required architecture/test scenario.
-23. Add location switching/reporting for Vuk/Mark and location-specific UI profiles while preserving strict location scoping in Realtime, pending/recovery storage, telemetry and RLS.
-24. The owner revenue summary should expose Petalon App Revenue / Real Revenue / difference %, Koversada App Revenue / Real Revenue / difference %, plus combined App Revenue and combined Real Revenue when complete.
+23. **Step 10 — Koversada / Multi-Location v1:** may proceed only after the current reliability gate is satisfied and must not weaken any Never-Again Rule.
+24. Koversada initial interface: Aquapark + Settings only; same app/link/Supabase project; own location state and RLS memberships.
+25. Koversada access: Koversada Worker operates Koversada; Vuk and Mark can monitor/manage both Petalon and Koversada; Vito remains Petalon-only.
+26. Koversada must support multiple independent Worker Auth users next season. Two workers using one location simultaneously plus Vuk/Mark monitoring is a required architecture/test scenario.
+27. Add location switching/reporting for Vuk/Mark and location-specific UI profiles while preserving strict location scoping in Realtime, pending/recovery storage, telemetry and RLS.
+28. The owner revenue summary should expose Petalon App Revenue / Real Revenue / difference %, Koversada App Revenue / Real Revenue / difference %, plus combined App Revenue and combined Real Revenue when complete.
 
 ## Reliability invariants
 
@@ -51,19 +68,19 @@ Last reviewed: 2026-08-28
 - Temporary server/network failure with confirmed local durability is different from unsafe device storage.
 - Incoming authoritative Realtime must not create a false STOP or false local mutation.
 - Accepted server facts must leave immutable forensic history.
+- A whole-location revision conflict is not automatically a business-resource conflict.
+- Multi-revision reconciliation cannot rely only on final BASE→CURRENT if hidden intermediate states could matter.
+- Automatic reconciliation must remain closed/allowlisted, bounded and fail-closed.
+- Deliberate local conflict discard must never mutate authoritative shared state.
 - Real Home Screen PWA lifecycle and concurrent phones are mandatory release-test conditions.
 - Owner revenue comparison is a detection/audit control, not a replacement for durability, idempotency or backups.
 - The whole-AppData JSONB model is an MVP bridge, not the final commercial transaction architecture.
 
 ## R3 decision status
 
-The previous decision rule said R3 should be promoted to immediate priority if R2 produced another unresolved multi-user conflict after forensic diagnosis.
+The Second Incident promoted R3 to immediate reliability direction. The Third Incident does not reverse that decision; it shows why the bounded R2.1 bridge must not grow into an endless snapshot-merge framework.
 
-The Second Incident satisfies that condition.
-
-R3 is therefore no longer merely deferred commercial/high-concurrency hardening. It is the immediate reliability direction.
-
-The exact migration should still be staged domain-by-domain rather than performed as an unreviewed whole-application rewrite.
+PR #32 exists to keep current Petalon operation viable while R3 is designed. Do not repeatedly widen the R2.1 classifier whenever a new complex domain case appears. If a case cannot be proven safely within the bounded bridge, let it fail closed and move the capability into R3.
 
 Step 10 frontend rollout remains behind this reliability gate.
 
@@ -85,6 +102,6 @@ Worker/location membership administration requires a trusted server-side write p
 
 ## Later
 
-25. Server-owned `Europe/Zagreb` business-day/reset logic where needed.
-26. Seasonal licensing if required by the business model.
-27. Payment/fiscal integrations later only if the product actually needs them.
+29. Server-owned `Europe/Zagreb` business-day/reset logic where needed.
+30. Seasonal licensing if required by the business model.
+31. Payment/fiscal integrations later only if the product actually needs them.

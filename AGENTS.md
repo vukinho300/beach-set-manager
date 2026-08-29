@@ -40,13 +40,19 @@ For persistence, concurrency or recovery work, also read `Second_Brain/07_Offlin
 
 ## Current reliability state
 
-Production Reliability R2 is the current fail-closed containment layer. The First Incident and Second Incident are canonical Production evidence.
+Production Reliability R2 remains the fail-closed containment layer.
 
-The Second Incident proved that whole-location compare-and-swap can falsely conflict when unrelated resources are changed concurrently. R3/conflict correctness is the immediate reliability direction. Do not weaken R2 while that migration is designed or implemented.
+R2.1 PR #31 is merged in Production main. It added a strict one-revision known-CAS reconciliation path, but it is **not** considered a successful field fix. The Third Incident on 2026-08-29 proved that its `currentRevision === expectedRevision + 1` assumption was too narrow for normal operation: one remote Set workflow advanced Petalon from revision 521 to 523 before Vuk's unrelated Aquapark save returned, so R2.1 never entered reconciliation and the full-screen conflict lockout returned.
+
+Draft PR #32 is the reviewed corrective bridge. It adds source-level no-op suppression, bounded multi-revision proof using private immutable history, exhaustive two-controller concurrency tests, and an explicit scoped discard/use-current recovery action. Its additive Production verification RPC migration has been applied and independently verified, but the PR frontend is not yet merged/deployed and the preserved conflicted iPhone has not yet completed the real upgrade-in-place recovery test.
+
+Do not describe Incident 3 as resolved or PR #32 as field-validated until that real device recovery and controlled concurrent-device validation pass.
+
+R3 remains the long-term reliability direction: immutable operation IDs/outbox, idempotent server commands, append-only accepted-operation evidence and narrower resource/entity concurrency.
 
 ## Step 10
 
-Draft PR #28 contains the Step 10/Koversada frontend. Its additive database foundation exists, but the frontend is not Production and rollout is paused behind the Second Incident reliability gate. Do not mix Step 10 changes into unrelated reliability work.
+Draft PR #28 contains the Step 10/Koversada frontend. Its additive database foundation exists, but the frontend is not Production and rollout remains paused behind the current reliability gate. Do not mix Step 10 changes into unrelated reliability work.
 
 ## Workflow
 

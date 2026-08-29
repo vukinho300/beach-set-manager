@@ -1,7 +1,7 @@
 # Risk Register
 
 Status: `canonical`
-Last reviewed: 2026-08-28
+Last reviewed: 2026-08-29
 
 ## Critical — silent operational data loss
 
@@ -22,45 +22,67 @@ Reference: [[18_Production_Incidents_and_Never_Again_Rules]].
 
 ## Critical — proven disjoint-resource whole-location contention
 
-**Evidence:** Second Incident, 2026-08-28.
+**Evidence:** Second Incident, 2026-08-28, and Third Incident, 2026-08-29.
 
-Production telemetry proves Vuk and Vito both began valid unrelated operations from revision 443:
+The Second Incident proved that unrelated Aquapark and numbered-Set operations can collide solely because they share one whole-location CAS revision.
 
-- Vuk — Aquapark wristband-return update;
-- Vito — Set 13 €12 payment.
-
-Vuk's operation was accepted first as revision 444. Vito's whole-location save then returned `conflict`.
-
-The authoritative 443 → 444 diff contains no Set, Bed or financial-transaction change; it contains only the Aquapark change.
-
-Therefore the current whole-`AppData` CAS boundary creates false contention between independent business resources during normal required operation.
+The Third Incident proved that a first narrow R2.1 fix was not sufficient: a normal remote Set workflow advanced two revisions before the unrelated local Aquapark request returned, so the exact-one-revision reconciliation gate never ran.
 
 Required mitigation:
 
+- immediate bounded bridge: strict semantic disjoint-operation reconciliation with safe multi-revision history proof where needed;
+- remove semantically meaningless source writes that create unnecessary revisions;
+- retain explicit fail-closed behavior for genuine same-resource/unsupported/ambiguous cases;
 - move toward immutable business-operation IDs and idempotent server commands;
 - progressively narrow concurrency to the relevant resource/entity;
-- auto-reconcile only where disjointness/safety is proven;
-- retain explicit conflict behavior for genuinely conflicting same-resource intents;
 - test concurrent different-domain operations on real devices.
+
+## Critical — single-revision assumptions can invalidate conflict recovery
+
+**Evidence:** Third Incident, 2026-08-29.
+
+PR #31 only attempted known-CAS reconciliation when `currentRevision === expectedRevision + 1`.
+
+The real conflict was 521 → 523, caused by an updatedAt-only Set revision followed by the real Set status change.
+
+A concurrency correction that works only when one remote revision wins is not sufficient for normal production. Remote devices may legitimately perform several accepted operations while another request is in flight.
+
+Required mitigation:
+
+- test 2+ remote revisions before the loser returns;
+- do not infer multi-revision safety from final BASE→CURRENT alone;
+- use immutable intermediate history or a stronger operation model to rule out hidden third values/add-remove/reset-restore behavior;
+- bound proof complexity and fail closed when proof is absent;
+- do not call a patch field-validated until representative real-device multi-revision races pass.
 
 ## Critical — conflict detection can cause whole-app operational lockout
 
-**Evidence:** Second Incident, 2026-08-28.
+**Evidence:** Second and Third Incidents.
 
-R2 safely preserved Set 13 and rejected unsafe overwrite, but the conflict state replaced the entire Petalon operational UI.
+R2/R2.1 safely preserved the losing operation and rejected unsafe overwrite, but the conflict state replaced the entire Petalon operational UI.
 
-`Check shared data again` reloads state; it does not reconcile the preserved mutation.
+`Check shared data again` reloads state; it does not retire or reconcile the preserved mutation.
 
-A worker can therefore remain indefinitely unable to perform unrelated work even though only one operation is unresolved.
+Draft PR #32 adds a scoped deliberate discard/use-current action, but that path remains a release gate until the already-conflicted iPhone proves upgrade-in-place recovery after deployment.
 
 Required mitigation:
 
 - explicit safe conflict-resolution choices;
 - worker-readable explanation of what is preserved and what conflicts;
 - safe reapply/rebase only when independently proven compatible;
-- deliberate discard/cancel path where product rules allow it;
+- deliberate scoped discard/cancel path where product rules allow it;
+- authoritative load/validation before destructive local discard;
+- removal of only the exact user+location pending record;
 - recovery/resume behavior that does not silently lose evidence;
 - no expectation that workers interpret raw JSON.
+
+## High — snapshot-proof bridge remains intentionally incomplete
+
+PR #32 does not remove whole-AppData CAS.
+
+It intentionally fails closed for >10 revision gaps, missing/non-contiguous history, hidden intermediate third states, unsupported compound deltas, same-resource conflicts, ambiguity and a second post-rebase conflict.
+
+This is acceptable as a temporary conservative bridge but not as the final commercial concurrency architecture. R3 remains required.
 
 ## High — false safety reactions to legitimate Realtime
 
@@ -85,6 +107,8 @@ Preview/fault-injection paths must never be enabled accidentally in Production. 
 ## High — privileged credential exposure
 
 No browser service-role key, database password or Auth-admin secret. Privileged actions require narrow server/RPC boundaries with RLS/membership validation.
+
+The R2.1 revision-chain verifier is deliberately boolean-only. Authenticated callers may execute only the public membership-checked proof RPC; private history/helpers remain inaccessible.
 
 ## Medium — backup/recovery limits
 

@@ -1,6 +1,7 @@
 # Project Boundaries and AI Roles
 
 Status: `canonical`
+Last reviewed: 2026-08-29
 
 ## Permanent project rules
 
@@ -9,7 +10,7 @@ Status: `canonical`
 - [ ] Compare Second Brain claims with the repository when current implementation details matter.
 - [ ] Follow recorded decisions unless Vuk explicitly changes them.
 - [ ] Never silently replace an architectural decision.
-- [ ] Clearly distinguish implemented, decided, planned and experimental work.
+- [ ] Clearly distinguish implemented, decided, planned, field-validated and experimental work.
 - [ ] End every project response with a **Second Brain Changes** section.
 - [ ] Keep the repository/database as technical source of truth and the Second Brain as project memory/control manual.
 - [ ] ChatGPT owns Second Brain maintenance. Codex must not edit `Second_Brain/` unless Vuk explicitly requests that exception.
@@ -18,6 +19,7 @@ Status: `canonical`
 - [ ] Prefer the cheapest reliable verification path. If a short manual action by Vuk is simpler, faster or clearer than agent automation, ask Vuk to do that action instead of spending tokens automating it.
 - [ ] Do not let Codex loop on blocked credentials, browser-only approval flows or flaky external tooling. After at most two sensible attempts at the same external/tooling blocker, stop and hand Vuk one exact manual action to perform, then resume from the verified result.
 - [ ] Never put passwords, service-role keys, database passwords, personal access tokens or other privileged credentials into Codex prompts, committed files or the Second Brain. Authenticate CLIs locally through their supported login flows and keep local credential/env files ignored.
+- [ ] Reliability claims must use the correct evidence level. Passing deterministic tests or a successful Preview is not the same as Production field validation.
 
 ## Roles
 
@@ -43,6 +45,18 @@ Authoritative for accepted architecture, project status, decisions, experiments 
 
 ## Scope boundary for the current chapter
 
-The current chapter is narrowly focused on Supabase-backed shared persistence, authentication, RLS, revocable Petalon membership and three-user shared operation for Vuk, Vito and Mark.
+The original Shared Petalon v1 chapter is complete. The current chapter is **Production reliability and safe multi-location readiness**.
 
-User-specific UX, multi-location automation, commercial licensing, white-labeling, infrastructure concealment, offline writes and payment integrations remain later work unless Vuk explicitly promotes one of them.
+Current scope includes:
+
+- R2/R2.1 containment and conflict correctness;
+- the First, Second and Third Incidents as permanent production evidence;
+- real multi-device concurrency and PWA lifecycle verification;
+- R3 operation/outbox/idempotency architecture as the next reliability direction;
+- Koversada as the real second location, with Step 10 frontend rollout gated behind reliability;
+- role/membership/RLS boundaries across Petalon and Koversada;
+- owner Real Revenue as a separate audit boundary, not a write-correctness mechanism.
+
+Do not describe offline/durable pending work, differentiated roles or multi-location architecture as merely deferred future work: real production evidence already promoted those topics into the active architecture.
+
+Still-later work includes seasonal licensing enforcement, white-label/commercial branding, broad infrastructure concealment and payment/fiscal integrations unless Vuk explicitly promotes one of them.
