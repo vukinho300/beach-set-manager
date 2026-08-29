@@ -153,6 +153,112 @@ describe('mirrored pending shared-state storage', () => {
       vi.useRealTimers();
     }
   });
+
+  it('does not cancel another user\'s queued primary save when discarding one user', async () => {
+    vi.useFakeTimers();
+    try {
+      let firstSave = true;
+      const primarySave = vi.fn(async (_pendingRecord: PendingSharedStateRecord<TestData>) => {
+        if (firstSave) {
+          firstSave = false;
+          await new Promise<void>(() => undefined);
+        }
+      });
+      const primary: PendingSharedStateStore<TestData> = {
+        load: async () => null,
+        save: primarySave,
+        remove: async () => undefined,
+        discard: async () => undefined,
+      };
+      const store = createMirroredPendingSharedStateStore(
+        primary,
+        createInMemoryPendingSharedStateStore<TestData>(),
+      );
+      const otherUserRecord = { ...record, userId: 'user-b' };
+
+      await store.save(record);
+      await Promise.resolve();
+      await store.save(otherUserRecord);
+      const discard = store.discard?.('user-a', 'location-a');
+      await vi.advanceTimersByTimeAsync(2_501);
+
+      await expect(discard).resolves.toBeUndefined();
+      expect(primarySave).toHaveBeenCalledTimes(2);
+      expect(primarySave).toHaveBeenLastCalledWith(otherUserRecord);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not cancel another location\'s queued primary save when discarding one location', async () => {
+    vi.useFakeTimers();
+    try {
+      let firstSave = true;
+      const primarySave = vi.fn(async (_pendingRecord: PendingSharedStateRecord<TestData>) => {
+        if (firstSave) {
+          firstSave = false;
+          await new Promise<void>(() => undefined);
+        }
+      });
+      const primary: PendingSharedStateStore<TestData> = {
+        load: async () => null,
+        save: primarySave,
+        remove: async () => undefined,
+        discard: async () => undefined,
+      };
+      const store = createMirroredPendingSharedStateStore(
+        primary,
+        createInMemoryPendingSharedStateStore<TestData>(),
+      );
+      const otherLocationRecord = { ...record, locationId: 'location-b' };
+
+      await store.save(record);
+      await Promise.resolve();
+      await store.save(otherLocationRecord);
+      const discard = store.discard?.('user-a', 'location-a');
+      await vi.advanceTimersByTimeAsync(2_501);
+
+      await expect(discard).resolves.toBeUndefined();
+      expect(primarySave).toHaveBeenCalledTimes(2);
+      expect(primarySave).toHaveBeenLastCalledWith(otherLocationRecord);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not cancel another key\'s queued primary save during accepted cleanup', async () => {
+    vi.useFakeTimers();
+    try {
+      let firstSave = true;
+      const primarySave = vi.fn(async (_pendingRecord: PendingSharedStateRecord<TestData>) => {
+        if (firstSave) {
+          firstSave = false;
+          await new Promise<void>(() => undefined);
+        }
+      });
+      const primary: PendingSharedStateStore<TestData> = {
+        load: async () => null,
+        save: primarySave,
+        remove: async () => undefined,
+      };
+      const store = createMirroredPendingSharedStateStore(
+        primary,
+        createInMemoryPendingSharedStateStore<TestData>(),
+      );
+      const otherKeyRecord = { ...record, userId: 'user-b', locationId: 'location-b' };
+
+      await store.save(record);
+      await Promise.resolve();
+      await store.save(otherKeyRecord);
+      await store.remove('user-a', 'location-a');
+      await vi.advanceTimersByTimeAsync(2_501);
+
+      expect(primarySave).toHaveBeenCalledTimes(2);
+      expect(primarySave).toHaveBeenLastCalledWith(otherKeyRecord);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('IndexedDB pending shared-state storage', () => {

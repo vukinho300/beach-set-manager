@@ -336,7 +336,7 @@ class HangingSaveTestPendingSharedStateStore<T> implements PendingSharedStateSto
 
 class MirroredPendingSharedStateStore<T> implements PendingSharedStateStore<T> {
   private primaryQueue: Promise<void> = Promise.resolve();
-  private primaryGeneration = 0;
+  private readonly primaryGenerations = new Map<string, number>();
 
   constructor(
     private readonly primary: PendingSharedStateStore<T>,
@@ -385,8 +385,9 @@ class MirroredPendingSharedStateStore<T> implements PendingSharedStateStore<T> {
       // IndexedDB remains an independent durable path below.
     }
 
-    const generation = this.primaryGeneration;
-    const primarySave = this.enqueuePrimary(() => generation === this.primaryGeneration
+    const key = recordKey(record.userId, record.locationId);
+    const generation = this.primaryGenerationFor(key);
+    const primarySave = this.enqueuePrimary(() => generation === this.primaryGenerationFor(key)
       ? withDurabilityDeadline(
           this.primary.save(record),
           PENDING_WRITE_TIMEOUT_MS,
@@ -400,7 +401,7 @@ class MirroredPendingSharedStateStore<T> implements PendingSharedStateStore<T> {
   }
 
   async remove(userId: string, locationId: string): Promise<void> {
-    this.primaryGeneration += 1;
+    this.advancePrimaryGeneration(recordKey(userId, locationId));
     let fallbackRemoved = false;
     try {
       await withDurabilityDeadline(
@@ -425,7 +426,7 @@ class MirroredPendingSharedStateStore<T> implements PendingSharedStateStore<T> {
   }
 
   async discard(userId: string, locationId: string): Promise<void> {
-    this.primaryGeneration += 1;
+    this.advancePrimaryGeneration(recordKey(userId, locationId));
     const fallbackRemove = withDurabilityDeadline(
       this.fallback.discard?.(userId, locationId)
         ?? this.fallback.remove(userId, locationId),
@@ -448,6 +449,14 @@ class MirroredPendingSharedStateStore<T> implements PendingSharedStateStore<T> {
     const queued = this.primaryQueue.then(operation, operation);
     this.primaryQueue = queued.catch(() => undefined);
     return queued;
+  }
+
+  private primaryGenerationFor(key: string): number {
+    return this.primaryGenerations.get(key) ?? 0;
+  }
+
+  private advancePrimaryGeneration(key: string): void {
+    this.primaryGenerations.set(key, this.primaryGenerationFor(key) + 1);
   }
 }
 
