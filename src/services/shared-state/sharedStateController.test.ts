@@ -122,6 +122,9 @@ class FakePendingStore<T> implements PendingSharedStateStore<T> {
   readonly remove = vi.fn(async (userId: string, locationId: string) => {
     this.records.delete(`${userId}:${locationId}`);
   });
+  readonly discard = vi.fn(async (userId: string, locationId: string) => {
+    this.records.delete(`${userId}:${locationId}`);
+  });
 }
 
 function normalize(value: unknown): TestData | null {
@@ -444,6 +447,194 @@ describe('SharedStateController', () => {
       pendingPreserved: true,
     });
     expect(repository.save).toHaveBeenCalledTimes(1);
+  });
+
+  it('upgrades an existing R2.1 conflict record and deliberately discards only its scoped local change', async () => {
+    const events: string[] = [];
+    const pendingStore = new FakePendingStore<TestData>();
+    const oldProductionRecord: PendingSharedStateRecord<TestData> = {
+      userId: 'user-a',
+      locationId: LOCATION_ID,
+      baseRevision: 521,
+      baseState: { marker: 'revision-521', value: 1 },
+      desiredState: { marker: 'preserved-vuk-close', value: 2 },
+      attemptedRevision: 521,
+      attemptedState: { marker: 'preserved-vuk-close', value: 2 },
+      automaticRebaseCount: 0,
+      createdAt: '2026-08-29T12:30:42.757Z',
+      updatedAt: '2026-08-29T12:30:43.000Z',
+    };
+    await pendingStore.save(oldProductionRecord);
+    await pendingStore.save({
+      ...oldProductionRecord,
+      userId: 'other-user',
+      desiredState: { marker: 'other-user-preserved', value: 8 },
+    });
+    await pendingStore.save({
+      ...oldProductionRecord,
+      locationId: '00000000-0000-4000-8000-000000000002',
+      desiredState: { marker: 'other-location-preserved', value: 9 },
+    });
+    const repository = new FakeRepository();
+    repository.loadHandler = vi.fn(async () => {
+      events.push('authoritative:loaded');
+      return {
+        status: 'found' as const,
+        value: sharedState({ marker: 'revision-523', value: 3 }, 523),
+      };
+    });
+    pendingStore.discard.mockImplementation(async (userId, locationId) => {
+      events.push('pending:discarded');
+      pendingStore.records.delete(`${userId}:${locationId}`);
+    });
+    const { controller } = createController(repository, { pendingStore });
+
+    await controller.reload();
+
+    expect(controller.getSnapshot()).toMatchObject({
+      status: 'conflict',
+      local: oldProductionRecord.desiredState,
+      pendingPreserved: true,
+    });
+    expect(pendingStore.records.get(`user-a:${LOCATION_ID}`)).toEqual(oldProductionRecord);
+    expect(repository.save).not.toHaveBeenCalled();
+
+    await expect(controller.discardPendingConflictAndUseLatest()).resolves.toEqual({
+      status: 'discarded',
+    });
+
+    expect(events.slice(-2)).toEqual(['authoritative:loaded', 'pending:discarded']);
+    expect(pendingStore.discard).toHaveBeenCalledWith('user-a', LOCATION_ID);
+    expect(pendingStore.records.has(`user-a:${LOCATION_ID}`)).toBe(false);
+    expect(pendingStore.records.has(`other-user:${LOCATION_ID}`)).toBe(true);
+    expect(pendingStore.records.has(
+      'user-a:00000000-0000-4000-8000-000000000002',
+    )).toBe(true);
+    expect(repository.save).not.toHaveBeenCalled();
+    expect(controller.getSnapshot()).toMatchObject({
+      status: 'ready',
+      data: { marker: 'revision-523', value: 3 },
+      revision: 523,
+      syncStatus: 'saved',
+      deviceSafety: 'safe',
+    });
+  });
+
+  it('loads and validates authoritative data before any destructive pending removal', async () => {
+    const pendingStore = new FakePendingStore<TestData>();
+    const { repository, controller } = createController(new FakeRepository(), { pendingStore });
+    repository.saveHandler = async () => ({
+      status: 'conflict',
+      current: sharedState({ marker: 'remote', value: 8 }, 5),
+    });
+    await controller.reload();
+    controller.update({ marker: 'local', value: 2 });
+    await flushPromises();
+    repository.loadHandler = async () => ({
+      status: 'unavailable',
+      error: { message: 'offline', retryable: true },
+    });
+
+    await expect(controller.discardPendingConflictAndUseLatest()).resolves.toMatchObject({
+      status: 'rejected',
+      reason: 'authoritative_unavailable',
+    });
+
+    expect(pendingStore.discard).not.toHaveBeenCalled();
+    expect(pendingStore.records.size).toBe(1);
+    expect(controller.getSnapshot()).toMatchObject({ status: 'conflict' });
+    expect(repository.save).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not discard pending work when the freshly loaded authoritative state is invalid', async () => {
+    const pendingStore = new FakePendingStore<TestData>();
+    const repository = new FakeRepository();
+    repository.saveHandler = async () => ({
+      status: 'conflict',
+      current: sharedState({ marker: 'remote', value: 8 }, 5),
+    });
+    const { controller } = createController(repository, { pendingStore });
+    await controller.reload();
+    controller.update({ marker: 'local', value: 2 });
+    await flushPromises();
+    repository.loadHandler = async () => ({
+      status: 'found',
+      value: {
+        ...sharedState({ marker: 'latest', value: 9 }, 6),
+        locationId: 'wrong-location',
+      },
+    });
+
+    await expect(controller.discardPendingConflictAndUseLatest()).resolves.toMatchObject({
+      status: 'rejected',
+      reason: 'authoritative_invalid',
+    });
+
+    expect(pendingStore.discard).not.toHaveBeenCalled();
+    expect(pendingStore.records.size).toBe(1);
+    expect(controller.getSnapshot()).toMatchObject({ status: 'conflict' });
+  });
+
+  it('stays blocked when scoped pending removal fails and never mutates the server', async () => {
+    const pendingStore = new FakePendingStore<TestData>();
+    pendingStore.discard.mockRejectedValue(new Error('remove failed'));
+    const repository = new FakeRepository();
+    repository.saveHandler = async () => ({
+      status: 'conflict',
+      current: sharedState({ marker: 'remote', value: 8 }, 5),
+    });
+    const { controller } = createController(repository, { pendingStore });
+    await controller.reload();
+    controller.update({ marker: 'local', value: 2 });
+    await flushPromises();
+    repository.save.mockClear();
+
+    await expect(controller.discardPendingConflictAndUseLatest()).resolves.toMatchObject({
+      status: 'rejected',
+      reason: 'pending_remove_failed',
+    });
+
+    expect(pendingStore.records.size).toBe(1);
+    expect(controller.getSnapshot()).toMatchObject({
+      status: 'conflict',
+      local: { marker: 'local', value: 2 },
+      pendingPreserved: true,
+    });
+    expect(repository.save).not.toHaveBeenCalled();
+  });
+
+  it('times out a hanging conflict discard and remains preserved', async () => {
+    vi.useFakeTimers();
+    try {
+      const pendingStore = new FakePendingStore<TestData>();
+      pendingStore.discard.mockImplementation(() => new Promise<void>(() => undefined));
+      const repository = new FakeRepository();
+      repository.saveHandler = async () => ({
+        status: 'conflict',
+        current: sharedState({ marker: 'remote', value: 8 }, 5),
+      });
+      const { controller } = createController(repository, { pendingStore });
+      await controller.reload();
+      controller.update({ marker: 'local', value: 2 });
+      await flushPromises();
+      repository.save.mockClear();
+
+      const discard = controller.discardPendingConflictAndUseLatest();
+      await vi.advanceTimersByTimeAsync(6_001);
+
+      await expect(discard).resolves.toMatchObject({
+        status: 'rejected',
+        reason: 'pending_remove_failed',
+      });
+      expect(controller.getSnapshot()).toMatchObject({
+        status: 'conflict',
+        local: { marker: 'local', value: 2 },
+        pendingPreserved: true,
+      });
+      expect(repository.save).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('surfaces save unavailability and suspends unsafe continued writes', async () => {

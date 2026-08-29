@@ -1,7 +1,7 @@
 # Production Incidents and Never-Again Rules
 
 Status: `canonical`
-Last reviewed: 2026-08-28
+Last reviewed: 2026-08-29
 
 This note exists so severe production failures become permanent architecture and release rules rather than one-off bug fixes.
 
@@ -170,32 +170,13 @@ One unresolved €12 Set payment replaced the whole Petalon application with a c
 
 The current `Check shared data again` action reloads authoritative state. It does not reconcile the preserved local operation. If the preserved local state continues to differ from the server, the user can return to the same conflict screen indefinitely.
 
-The worker therefore had no safe practical route to:
-
-- reconcile the Set 13 operation;
-- discard only that operation deliberately;
-- reapply it against the new authoritative state where safe;
-- or return to unrelated Petalon work.
+The worker therefore had no safe practical route to reconcile, deliberately discard/reapply, or return to unrelated work.
 
 This turned safe conflict detection into an operational availability failure.
 
-The recovery JSON also proved technically useful but produced poor worker UX on the affected Android flow because the file opened as raw JSON/content.
-
-## Business impact
-
-Set 13 was a real payment whose application mutation was created and preserved but not accepted by the server.
-
-Set 7 was physically paid before the Set 13 application attempt, but current evidence does not prove that a Set 7 application mutation was attempted.
-
-After Vito was locked out, Set 9 and Set 11 were physically paid but could not be entered into Beach Set Manager because the normal application was unavailable.
-
-Do not describe Sets 7, 9 or 11 as server writes that disappeared.
-
-The final physical timing/status of the initially mentioned Set 10 / three-sunbed item remains unresolved and should not be invented.
-
 ## Relationship to the First Incident
 
-The First Incident and Second Incident are distinct failure mechanisms.
+The First and Second Incidents are distinct failure mechanisms.
 
 First Incident:
 
@@ -218,29 +199,294 @@ Second Incident:
 
 Do not describe the incidents as having the same proven root cause.
 
-They do, however, expose different weaknesses of the same whole-location snapshot architecture.
+# R2.1 PR #31 — first corrective attempt after the Second Incident
 
-## Step 10 relationship
+PR #31 was merged and deployed as a narrow pre-R3 bridge.
 
-The Step 10 / Koversada frontend in Draft PR #28 was not deployed to Production during the Second Incident.
+Its design was deliberately conservative:
 
-The Production client telemetry identifies the running application build as main commit `8f7f332e51e402dbdcba4bc63d029f5ff6c4c042`.
+- direct explicit CAS conflicts only;
+- exact pending/base/attempt/durable-desired alignment;
+- strict allowlist of known AppData business bundles;
+- no generic JSON merge;
+- rebase from current authoritative server state;
+- same-resource/unsupported changes fail closed;
+- one automatic rebase only;
+- rebased pending data must be durable before retry.
 
-The additive Step 10 database foundation had already been provisioned remotely, but Petalon remained on the existing R2 `location_state` CAS write architecture. The Second Incident's exact conflict is independently explained by two normal R2 Petalon writes racing on revision 443.
+However, it also required:
 
-Do not attribute the Second Incident to the Draft PR #28 frontend.
+`current.revision === expectedRevision + 1`
 
-## Architecture consequence
+The reason was legitimate: across several accepted revisions, a final BASE→CURRENT diff alone cannot prove that an intermediate operation did not add then remove a transaction, reset then restore state, touch a resource to a third value and later change it again, or otherwise leave no evidence in the final snapshot.
 
-The Second Incident satisfies the existing roadmap trigger for promoting Reliability R3 from planned hardening to immediate reliability work.
+PR #31 therefore avoided unsafe multi-revision inference by refusing every revision gap larger than one.
 
-The current whole-location CAS boundary is no longer merely a theoretical concurrency limitation. Production evidence proves that unrelated normal business actions can conflict solely because they share one location revision.
+The mistake was not conservatism itself. The mistake was treating **one winning remote revision** as sufficient coverage of normal production concurrency.
 
-The next reliability architecture must prevent independent-resource operations from manufacturing whole-location business conflicts while retaining conservative protection for genuinely conflicting same-resource intents.
+Its deterministic regression reproduced the exact Second Incident `443 -> 444` shape, but it did not test the case where another device advances two or more legitimate revisions before the slower request returns.
 
-A narrow pre-R3 conflict-recovery patch may be considered if needed for operational continuity, but it must not normalize unsafe blind whole-state rebasing or overwrite newer authoritative work.
+# Third Incident — 2026-08-29
 
-Step 10 frontend rollout should remain paused until the Second Incident corrective write/conflict strategy is reviewed and accepted.
+## Operational impact
+
+Vuk intentionally attempted to reproduce the Second Incident after PR #31 had been merged/deployed.
+
+Both devices were running Production build:
+
+`21c6e25d5caf83bf46e53aa260aedab2596e0168`
+
+Vuk closed an Aquapark entry while Vito marked a numbered Set left/closed at approximately the same time.
+
+The same full-screen `Newer shared data exists` conflict appeared on Vuk's iPhone. As in the Second Incident, the normal application was unavailable and `Check shared data again` did not provide an exit.
+
+Vuk exported the preserved local recovery file instead of clearing the phone. That already-conflicted device is intentionally being kept for upgrade-in-place verification of the new recovery path.
+
+## Exact preserved local operation
+
+The preserved file was exported at:
+
+`2026-08-29T12:31:01.012Z`
+
+and recorded server revision:
+
+`523`
+
+The local Aquapark operation changed entry:
+
+`52b01ca1-d713-4029-9e9e-0ae0c7cb2829`
+
+wristbands `15, 48`
+
+from active to closed with local `closedAt`:
+
+`2026-08-29T12:30:42.757Z`
+
+That close never appeared in authoritative revisions 521–523.
+
+## Exact remote Set sequence
+
+Immutable Production history proves:
+
+Revision 521 — Set 53:
+
+- status `free`;
+- no `updatedAt`.
+
+Revision 522 — Set 53:
+
+- status still `free`;
+- `updatedAt = 2026-08-29T12:30:34.605Z`.
+
+Revision 523 — Set 53:
+
+- status `left`;
+- `updatedAt = 2026-08-29T12:30:40.404Z`.
+
+Both revisions 522 and 523 were accepted under Vito's account.
+
+Telemetry proves Vuk's later repository save was still based on expected revision 521 and returned explicit conflict after the server had advanced to 523.
+
+## Root cause of the extra revision
+
+Code tracing proved revision 522 was not Realtime, bridge coalescing or a database anomaly.
+
+The Set status source workflow allowed `Mark Free` on a Set that was already free. `updateSetStatus()` still stamped a new `updatedAt`, so a semantically unchanged UI action created a real whole-location shared revision.
+
+Vito then performed the real `FREE -> LEFT` action, creating revision 523.
+
+This means normal human/UI interaction can advance more than one revision while another phone's request is in flight.
+
+## Why PR #31 did not work
+
+Vuk's request had:
+
+- expected revision `521`;
+- current authoritative revision `523`.
+
+PR #31's known-conflict path required:
+
+`current.revision === expectedRevision + 1`
+
+Therefore the controller rejected R2.1 eligibility **before** calling the semantic disjoint-resource reconciler.
+
+The final business changes were still disjoint:
+
+- remote: Set 53 `FREE -> LEFT`;
+- local: unrelated Aquapark entry `ACTIVE -> CLOSED`.
+
+But PR #31 had no mechanism to prove whether revisions 522 and 523 contained only safe monotonic progression, so it conservatively exposed the full conflict.
+
+**Field judgment:** the first R2.1 patch was operationally useless for the real Incident 3 path because its core eligibility assumption excluded the actual race produced by the application. It did not fix normal concurrent operation in the way we expected.
+
+This does **not** mean PR #31 had zero value. It still:
+
+- preserved Vuk's operation durably;
+- prevented stale overwrite;
+- gave exact telemetry;
+- correctly handled the narrower class where exactly one supported disjoint remote revision wins;
+- established the strict semantic allowlist and durability-before-retry machinery reused by the correction.
+
+The failure was that we treated that narrower class as sufficient evidence for the field problem.
+
+## Why the first R2.1 tests were insufficient
+
+The original deterministic test modeled the Second Incident as one remote winner followed by one loser conflict.
+
+It did not require:
+
+- a two-controller matrix across every supported operation family;
+- both winner/loser directions for all operation-family pairings;
+- two or three accepted remote revisions before the local request resolves;
+- the exact `FREE -> FREE + updatedAt -> LEFT` sequence;
+- a worker-usable in-app exit from a preserved old conflict.
+
+The Third Incident therefore found a production-relevant state-space hole that the first test suite never exercised.
+
+# PR #32 — bounded R2.1 corrective design
+
+PR #32 is designed specifically around the proven reasons PR #31 failed.
+
+## Correction 1 — suppress semantically meaningless Set/Bed source writes
+
+Same-status non-financial Set/Bed actions now stop before shared-state mutation when the only effect would be a new `updatedAt`.
+
+Paid actions remain unsuppressed because a payment is a new financial bundle even when the resource was previously paid.
+
+This removes the exact source path that created Incident 3 revision 522.
+
+It reduces unnecessary contention, but it is not sufficient by itself because legitimate remote devices can still perform two or more real operations while another request is in flight.
+
+## Correction 2 — prove multi-revision safety from immutable history
+
+PR #32 does not simply remove the `+1` rule.
+
+For a direct explicit CAS conflict:
+
+- `current.revision > expectedRevision` is required;
+- exactly `+1` remains directly eligible under the existing strict checks;
+- a larger gap requires a positive server proof;
+- the gap is bounded to at most 10 revisions;
+- the history must be complete/contiguous and end at the current authoritative revision;
+- every snapshot must pass strict AppData validation;
+- every projected resource at every intermediate revision must equal either its base value or its final value.
+
+The proof rejects hidden intermediate third values, add/remove, reset/restore and transaction disappearance that final-state comparison alone cannot detect.
+
+Only a boolean crosses the public RPC boundary. Historical AppData remains private.
+
+A positive proof is still not enough to rebase: the existing strict final semantic classifier must also prove the BASE→LOCAL and BASE→CURRENT business bundles are supported and compatible.
+
+## Correction 3 — one durable semantic rebase, not generic merge
+
+When both proof layers pass, the controller:
+
+1. uses the current authoritative state as the merge base;
+2. applies only the classified local semantic patches;
+3. rewrites the pending record to the new authoritative base;
+4. sets `automaticRebaseCount = 1`;
+5. clears old attempt metadata;
+6. durably persists that rebased pending record;
+7. only then retries the repository save against the new revision.
+
+A second conflict does not create an unbounded automatic loop.
+
+Same-resource, unsupported, malformed, ambiguous or unprovable cases remain preserved conflicts.
+
+## Correction 4 — real escape from an old preserved conflict
+
+PR #32 adds:
+
+`Discard local change and use current shared data`
+
+This is intentionally destructive only to the exact device-side pending record for the current user+location.
+
+The user must confirm that the unsent local change will be permanently discarded and that the server will not be changed.
+
+The controller loads and validates latest authoritative state **before** deleting local evidence. It then requires successful deletion from both local durable mirrors, with queued stale IndexedDB writes invalidated only for the same user+location key. Only after successful removal does it clear in-memory pending state and adopt the freshly loaded server state.
+
+If load/validation/removal fails, it remains blocked and preserved.
+
+The recovery action performs zero repository save calls.
+
+Tests explicitly create an old R2.1-format pending record and initialize the new controller from it, so the feature is intended to work after an in-place application upgrade without clearing site data, reinstalling or signing out.
+
+## Why PR #32 should fix Incident 3 in theory
+
+For the exact proven Incident 3 history:
+
+- base = revision 521;
+- remote intermediate = revision 522 (`FREE -> FREE + updatedAt`);
+- remote final = revision 523 (`FREE -> LEFT`);
+- local desired = unrelated Aquapark close.
+
+The new source guard should prevent the redundant updatedAt-only revision in future equivalent UI use.
+
+Even if several legitimate remote revisions still occur, the new Production proof can examine the complete immutable chain rather than guessing from the final snapshot.
+
+The real stored 521→522→523 chain has already been independently verified as:
+
+- contiguous;
+- strict-AppData well formed;
+- monotonic under the new resource projection.
+
+After that proof, the existing final semantic classifier sees the Set 53 change and Aquapark close as disjoint supported resources. The controller can then durably rebase the local Aquapark close onto current authoritative revision 523 and retry once, producing a hypothetical next revision that preserves both intentions.
+
+This is the specific mechanism PR #31 did not have.
+
+## Verification before frontend merge
+
+PR #32 has been reviewed against the actual repository, not only Codex prose.
+
+Evidence includes:
+
+- 268/268 tests passing;
+- 64/64 ordered safe two-controller pairings across numbered Set status/payment, Bed status/payment, non-numbered Sunbed add, Aquapark add, return and close;
+- multi-revision races with two/three remote revisions;
+- exact Incident 3 regression;
+- 17 negative incompatible/malformed cases failing closed;
+- ambiguity, restart, durability-before-retry and second-conflict tests;
+- upgrade-in-place old-pending recovery tests;
+- 33/33 real local SQL integration checks;
+- TypeScript/SQL semantic parity review that caught and fixed an initially too-permissive SQL validator;
+- Production migration applied and independently verified before frontend merge;
+- real Production Incident 3 history proving true under the new server proof;
+- private history/helpers still inaccessible to browser roles.
+
+## Why this is still theory, not a closed incident
+
+The new frontend has not yet been merged/deployed at this documentation checkpoint.
+
+Vuk's real conflicted iPhone still contains the old Incident 3 pending record and has deliberately not had its site data cleared.
+
+Incident 3 is not resolved until:
+
+1. PR #32 is merged and its exact `main` deployment is live;
+2. the same iPhone loads the new frontend without clearing site data;
+3. the new recovery action appears on the old conflict screen;
+4. Vuk confirms discard;
+5. the app loads latest Petalon first, removes only the old local pending record, retains Auth and returns to normal ready/safe operation;
+6. controlled real two-phone concurrent operations across representative Set/Bed/Sunbed/Aquapark combinations pass;
+7. telemetry and immutable history confirm the expected accepted/rebased outcomes.
+
+Until then, describe PR #32 as **reviewed and theoretically correct for the proven Incident 3 class**, not as guaranteed or field-proven.
+
+## Remaining limits even if PR #32 passes
+
+PR #32 still uses whole-AppData snapshot CAS and is intentionally bounded.
+
+It does not solve:
+
+- gaps greater than 10 revisions;
+- missing/non-contiguous history;
+- hidden intermediate third-state chains;
+- unsupported compound operations;
+- every reservation/delete/reset/import interaction;
+- ambiguous response idempotency;
+- operation-level deduplication;
+- general high-concurrency commercial scaling.
+
+Those remain R3 responsibilities.
 
 # Never-Again Rules
 
@@ -258,29 +504,35 @@ Step 10 frontend rollout should remain paused until the Second Incident correcti
 12. **No single browser subsystem is trusted as infallible.** Recovery should use independent paths where practical.
 13. **Ambiguity preserves evidence.** Never force an old snapshot over newer server state merely to make a conflict disappear.
 14. **Release testing must reproduce the real round.** Unit tests alone are insufficient for reliability changes.
-15. **The whole-AppData JSONB model is not the final commercial write model.** Real multi-user concurrency and the First Incident are evidence to move toward immutable business operations.
+15. **The whole-AppData JSONB model is not the final commercial write model.** Real multi-user concurrency and the First/Second/Third Incidents are evidence to move toward immutable business operations.
 16. **Owner revenue comparison is a detection layer.** Real revenue is a boss-entered external reference. Workers must not be burdened with reconciliation workflow, and the comparison must not be mistaken for write durability or recovery.
-17. **Disjoint resource actions must not become false business conflicts.** A Set payment and an unrelated Aquapark action must not conflict solely because they share one whole-location revision.
+17. **Disjoint resource actions must not become false business conflicts.** A Set payment/status and an unrelated Aquapark/Bed/Sunbed action must not conflict solely because they share one whole-location revision.
 18. **Conflict detection is not conflict resolution.** Preserving a mutation and showing a conflict is necessary but insufficient; the system needs a safe reconciliation or deliberate-resolution path.
-19. **One preserved conflict must not indefinitely remove unrelated operational capability.** Fail closed against unsafe writes, but design recovery so the worker can safely resolve the affected operation and return to work.
-20. **Concurrency tests must use different domains, not only the same resource.** Release tests must include simultaneous Set/Bed/Sunbed and Aquapark operations from separate devices.
+19. **One preserved conflict must not indefinitely remove unrelated operational capability.** Fail closed against unsafe writes, but design recovery so the worker can safely resolve or deliberately retire the affected operation and return to work.
+20. **Concurrency tests must use different domains, not only the same resource.** Release tests must include simultaneous Set/Bed/Sunbed/Aquapark operations from separate devices and both winner/loser directions.
 21. **Recovery UX must be worker-usable.** Machine-readable evidence files are valuable, but a normal worker must not be expected to understand raw JSON in order to recover from an operational incident.
+22. **One remote revision is not a sufficient concurrency model.** Test the loser while another device advances two or more accepted revisions before the conflict returns.
+23. **Final-state disjointness is not enough across multiple revisions.** A safe multi-revision snapshot bridge must rule out hidden intermediate third states, add/remove, reset/restore and disappearing financial effects, or fail closed.
+24. **Eliminate semantic no-op writes at the source.** A status action that changes only `updatedAt` must not consume a shared revision unless that timestamp change is itself a required business fact.
+25. **Recovery changes must upgrade old conflicts in place.** Do not require clearing all browser/site data, reinstalling or signing out merely to escape a preserved pending record after a fixed version deploys.
+26. **Scoped recovery must remain scoped.** Discard/removal/invalidation for one user+location must never cancel or resurrect pending work for another user or location.
+27. **Do not call a reliability patch field-validated from tests alone.** The affected real device class and representative concurrent workflow must pass after deployment, with telemetry/history inspected.
 
-# Immediate Preventative Database Step — Reliability R3
+# Immediate Reliability Direction — bounded bridge then R3
 
-R2 remains the fail-closed containment layer for the current architecture. After the Second Incident's forensic diagnosis, R3 is promoted from future commercial hardening to the immediate reliability track.
+R2 remains the fail-closed containment layer.
 
-Production evidence now proves that one whole-location CAS revision creates false contention between unrelated business resources during the normal two-worker Petalon workflow.
+PR #31 demonstrated that strict semantic rebase is possible but also demonstrated why a narrow +1 assumption cannot be treated as a complete concurrency solution.
 
-R3 should therefore move operational writes toward an immutable client outbox, idempotent server operation/command boundary and progressively narrower concurrency scopes.
+PR #32 is the accepted bounded bridge design: source no-op suppression, private immutable-history proof for short multi-revision chains, strict operation allowlist, one durable rebase, and explicit scoped conflict discard.
 
-Each real business action should receive one stable `operation_id` and be retried with the same ID after reopen/ambiguous responses. The client should durably preserve a small immutable operation record. The server should accept commands through narrow authenticated functions that derive `auth.uid()`, verify active location membership, validate the business action, enforce unique `operation_id`, and return the already-accepted result when the same operation is retried.
+Do not expand this bridge into a generic JSON merge system. If a case cannot be proven within its closed model, fail closed and move the business action into R3.
 
-Accepted operations should form an append-only audit trail. Revenue-affecting actions should also create immutable/voidable financial ledger records linked to the operation ID. Corrections should use explicit reversal/void semantics rather than silent hard deletion.
+R3 should move operational writes toward an immutable client outbox, idempotent server operation/command boundary and progressively narrower concurrency scopes.
 
-The write model should progressively move from one whole-location revision toward per-entity concurrency. Two workers changing different resources should not conflict solely because they started from the same location revision; same-resource conflicting intents must still be detected.
+Each real business action should receive one stable `operation_id` and be retried with the same ID after reopen/ambiguous responses. Accepted operations should form an append-only audit trail. Revenue-affecting actions should create immutable/voidable financial ledger records linked to the operation ID. Corrections should use explicit reversal/void semantics rather than silent hard deletion.
 
-Server-side reconciliation should be possible between accepted operations, financial ledger totals, current entity state and daily reports. Database backup/PITR should be evaluated before commercial rollout for accepted server data, but it cannot recover an operation that never reached durable client/server storage.
+Database backup/PITR should be evaluated before commercial rollout for accepted server data, but it cannot recover an operation that never reached durable client/server storage.
 
 # Layer 5 — Owner Real Revenue vs App Revenue
 
@@ -303,7 +555,7 @@ The owner dashboard should show Petalon and Koversada separately, with App Reven
 
 Revenue-comparison records should live in a separate RLS-protected server table, not inside `location_state`. Only active authorized owner/admin roles for that location may read/write them. Preserve audit metadata/history for edits so a later correction does not erase who entered an earlier value.
 
-Layer 5 detects business-level divergence. It does **not** recover a client operation that was never durably recorded. Recovery remains the responsibility of R2/R3 plus server history/backups.
+Layer 5 detects business-level divergence. It does **not** recover a client operation that was never durably recorded. Recovery remains the responsibility of R2/R2.1/R3 plus server history/backups.
 
 # Multi-location concurrency requirement
 
@@ -311,13 +563,14 @@ Koversada must be designed as a shared location, not a one-user app. Initially a
 
 # Post-incident release order
 
-1. Keep R2 as the Production containment layer while the Second Incident correction is developed.
-2. Record and preserve the Second Incident forensic evidence and Never-Again Rules.
-3. Promote R3 / disjoint-resource conflict correctness to immediate reliability work.
-4. Add a practical safe conflict-resolution/resume path without blind whole-state overwrite.
-5. Verify real concurrent Petalon use with different domains from separate devices.
-6. Re-review and resume Step 10 frontend rollout only after the Second Incident reliability gate passes.
-7. Keep Layer 5 owner revenue comparison as a detection/audit control, not a durability or recovery mechanism.
-8. Treat R3 immutable operations/idempotency as required before commercial maturity and high-concurrency next-season use.
+1. Preserve all First/Second/Third Incident evidence and keep proven facts separate from hypotheses.
+2. Keep R2 as fail-closed containment while the bounded PR #32 correction is deployed/field-tested.
+3. Merge/deploy PR #32 only after code, SQL, security and Second Brain review are complete.
+4. Recover the same already-conflicted iPhone in place using the new scoped discard/use-current path; do not clear site data before the test.
+5. Verify representative real concurrent Petalon use across different domains from separate devices and inspect telemetry/history.
+6. If that passes, mark Incident 3 resolved by the bounded bridge and begin R3A immediately.
+7. Re-review/resume Step 10 frontend rollout only after the reliability gate passes.
+8. Keep Layer 5 owner revenue comparison as a detection/audit control, not a durability or recovery mechanism.
+9. Treat R3 immutable operations/idempotency as required before commercial maturity and high-concurrency next-season use.
 
-Future severe incidents should be named `Third Incident`, `Fourth Incident`, etc. Each record must separate proven facts from hypotheses and update these permanent rules.
+Future severe incidents should be named `Fourth Incident`, `Fifth Incident`, etc. Each record must separate proven facts from hypotheses and update these permanent rules.

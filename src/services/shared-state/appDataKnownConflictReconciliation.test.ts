@@ -303,6 +303,97 @@ describe('known rejected AppData conflict reconciliation', () => {
     });
   });
 
+  it('reproduces Incident 3 and rebases an Aquapark close over two disjoint Set revisions', async () => {
+    const base = baseState();
+    const entryId = '52b01ca1-d713-4029-9e9e-0ae0c7cb2829';
+    base.aquaparkEntries = [aquaparkEntry(entryId, [15, 48])];
+
+    const local = clone(base);
+    local.aquaparkEntries[0] = {
+      ...local.aquaparkEntries[0],
+      status: 'closed',
+      closedAt: '2026-08-29T12:30:42.757Z',
+    };
+
+    const revision522 = clone(base);
+    revision522.sets[53] = {
+      ...revision522.sets[53],
+      updatedAt: '2026-08-29T12:30:34.605Z',
+    };
+    const revision523 = clone(revision522);
+    revision523.sets[53] = {
+      ...revision523.sets[53],
+      status: 'left',
+      updatedAt: '2026-08-29T12:30:40.404Z',
+    };
+
+    let stored: PendingSharedStateRecord<AppData> | null = null;
+    const pendingStore: PendingSharedStateStore<AppData> = {
+      load: vi.fn(async () => stored),
+      save: vi.fn(async (record) => { stored = clone(record); }),
+      remove: vi.fn(async () => { stored = null; }),
+    };
+    let server = sharedState(base, 521);
+    let saveCount = 0;
+    const repository: SharedLocationStateRepository<AppData> = {
+      load: vi.fn(async (): Promise<LoadSharedLocationStateResult<AppData>> => ({
+        status: 'found',
+        value: server,
+      })),
+      save: vi.fn(async (
+        _locationId,
+        expectedRevision,
+        nextState,
+      ): Promise<SaveSharedLocationStateResult<AppData>> => {
+        saveCount += 1;
+        if (saveCount === 1) {
+          expect(expectedRevision).toBe(521);
+          server = sharedState(revision522, 522);
+          server = sharedState(revision523, 523);
+          return {
+            status: 'conflict',
+            current: server,
+            revisionChainVerified: true,
+          };
+        }
+        expect(expectedRevision).toBe(523);
+        server = sharedState(nextState, 524);
+        return { status: 'accepted', value: server };
+      }),
+      subscribe: () => () => undefined,
+    };
+    const controller = new SharedStateController(
+      repository,
+      LOCATION_ID,
+      (value) => isValidAppDataReconciliationSnapshot(value) ? value : null,
+      {
+        userId: USER_ID,
+        pendingStore,
+        reconcileKnownRejectedConflict: reconcileKnownRejectedAppDataConflict,
+        validateKnownConflictCurrent: isValidAppDataReconciliationSnapshot,
+      },
+    );
+    const observedStatuses: string[] = [];
+    controller.observe((state) => observedStatuses.push(state.status));
+
+    await controller.reload();
+    expect(controller.update(local)).toEqual({ status: 'accepted', kind: 'queued' });
+    await flushPromises();
+
+    expect(repository.save).toHaveBeenCalledTimes(2);
+    expect(repository.save).toHaveBeenNthCalledWith(2, LOCATION_ID, 523, expect.anything());
+    expect(server.revision).toBe(524);
+    expect(server.state.sets[53]).toEqual(revision523.sets[53]);
+    expect(server.state.aquaparkEntries[0]).toMatchObject({
+      id: entryId,
+      status: 'closed',
+      closedAt: '2026-08-29T12:30:42.757Z',
+      returnedWristbands: [],
+    });
+    expect(stored).toBeNull();
+    expect(observedStatuses).not.toContain('conflict');
+  });
+
   it('rejects different changes to the same Set', () => {
     const base = baseState();
     const reservation = {

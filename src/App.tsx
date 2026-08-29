@@ -13,6 +13,10 @@ import {
   getLocalDateKey,
   TOTAL_SETS,
 } from './domain/appData';
+import {
+  isBeachSetStatusMutationNoop,
+  isExtraBedStatusMutationNoop,
+} from './domain/beachSetStatusMutation';
 import type {
   AppData,
   AquaparkEntry,
@@ -65,6 +69,7 @@ import {
   stageAuthoritativeSnapshot,
 } from './services/shared-state/operationalAppDataBridge';
 import { useSharedAppData } from './services/shared-state/useSharedAppData';
+import { ConflictDiscardAction } from './services/shared-state/ConflictDiscardAction';
 import {
   scheduleAdmissionWatchdog,
   shouldArmAdmissionWatchdog,
@@ -1886,6 +1891,9 @@ function OperationalApp({
     if (operationalMutationsLockedRef.current) {
       return;
     }
+    if (isBeachSetStatusMutationNoop(sets[setId], status, details)) {
+      return;
+    }
     operationalMutationsLockedRef.current = true;
     const price = status === 'paid' ? normalizePositiveMoney(details?.price) : undefined;
     const transaction = price ? {
@@ -1909,6 +1917,9 @@ function OperationalApp({
 
   function saveBed(bedId: BedId, status: BedStatus, details?: Partial<ExtraBed>) {
     if (operationalMutationsLockedRef.current) {
+      return;
+    }
+    if (isExtraBedStatusMutationNoop(extraBeds[bedId], status, details)) {
       return;
     }
     operationalMutationsLockedRef.current = true;
@@ -4742,6 +4753,7 @@ function App() {
           serverRevision={currentRevision ?? null}
           userId={auth.state.user.id}
         />
+        <ConflictDiscardAction onDiscard={shared.discardPendingConflictAndUseLatest} />
       </AuthStatusPage>
     );
   }
