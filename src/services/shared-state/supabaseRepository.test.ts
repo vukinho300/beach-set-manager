@@ -42,6 +42,7 @@ function stateRow(
 
 class FakeSupabaseClient {
   readonly calls: QueryCall[] = [];
+  readonly rpcCalls: Array<{ functionName: string; args: Record<string, unknown> }> = [];
   readonly channels: FakeRealtimeChannel[] = [];
   readonly channel = vi.fn((name: string) => {
     const channel = new FakeRealtimeChannel(name);
@@ -51,6 +52,7 @@ class FakeSupabaseClient {
   readonly removeChannel = vi.fn(async () => 'ok');
   private readonly selectResponses = new Map<string, QueryResponse[]>();
   private readonly updateResponses = new Map<string, QueryResponse[]>();
+  private readonly rpcResponses = new Map<string, { data: boolean | null; error: { code?: string } | null }[]>();
 
   queueSelect(table: string, response: QueryResponse) {
     this.queue(this.selectResponses, table, response);
@@ -58,6 +60,24 @@ class FakeSupabaseClient {
 
   queueUpdate(table: string, response: QueryResponse) {
     this.queue(this.updateResponses, table, response);
+  }
+
+  queueRpc(functionName: string, response: { data: boolean | null; error: { code?: string } | null }) {
+    this.rpcResponses.set(functionName, [
+      ...(this.rpcResponses.get(functionName) ?? []),
+      response,
+    ]);
+  }
+
+  rpc(functionName: string, args: Record<string, unknown>) {
+    this.rpcCalls.push({ functionName, args });
+    const responses = this.rpcResponses.get(functionName) ?? [];
+    const response = responses.shift();
+    if (!response) {
+      throw new Error(`No fake RPC response queued for ${functionName}.`);
+    }
+    this.rpcResponses.set(functionName, responses);
+    return Promise.resolve(response);
   }
 
   from(table: string) {
@@ -274,6 +294,60 @@ describe('Supabase shared location state repository', () => {
     expect(result).toMatchObject({
       status: 'conflict',
       current: { revision: 10, state: { source: 'server' } },
+    });
+  });
+
+  it('attaches only a boolean server proof for a safe multi-revision conflict chain', async () => {
+    const fake = new FakeSupabaseClient();
+    fake.queueUpdate('location_state', { data: [], error: null });
+    fake.queueSelect('location_state', {
+      data: [stateRow(523, { source: 'server' })],
+      error: null,
+    });
+    fake.queueRpc('verify_location_state_revision_chain', { data: true, error: null });
+    const repository = createSupabaseSharedLocationStateRepository<{ source: string }>(
+      fake.asClient(),
+    );
+
+    await expect(repository.save(LOCATION_ID, 521, { source: 'client' })).resolves.toMatchObject({
+      status: 'conflict',
+      current: { revision: 523 },
+      revisionChainVerified: true,
+    });
+    expect(fake.rpcCalls).toEqual([{
+      functionName: 'verify_location_state_revision_chain',
+      args: {
+        p_location_id: LOCATION_ID,
+        p_base_revision: 521,
+        p_current_revision: 523,
+      },
+    }]);
+  });
+
+  it('fails closed without a revision-chain proof and still returns the preserved conflict', async () => {
+    const fake = new FakeSupabaseClient();
+    fake.queueUpdate('location_state', { data: [], error: null });
+    fake.queueSelect('location_state', {
+      data: [stateRow(523, { source: 'server' })],
+      error: null,
+    });
+    fake.queueRpc('verify_location_state_revision_chain', {
+      data: null,
+      error: { code: '503' },
+    });
+    const repository = createSupabaseSharedLocationStateRepository<{ source: string }>(
+      fake.asClient(),
+    );
+
+    await expect(repository.save(LOCATION_ID, 521, { source: 'client' })).resolves.toEqual({
+      status: 'conflict',
+      current: {
+        locationId: LOCATION_ID,
+        state: { source: 'server' },
+        revision: 523,
+        updatedAt: '2026-08-25T12:34:56.000Z',
+        updatedBy: 'b5771919-8ee9-49d5-b7f5-8e634ee1dcbf',
+      },
     });
   });
 

@@ -14,6 +14,7 @@ import {
 import {
   SharedStateController,
   type NormalizeSharedState,
+  type SharedConflictDiscardResult,
   type SharedStateControllerState,
   type SharedUpdateAdmission,
 } from './sharedStateController';
@@ -26,6 +27,7 @@ export type SharedAppDataSession = {
   update(nextState: AppData, mutationSequence?: number): SharedUpdateAdmission;
   recordLocalSafetyBlock(mutationSequence?: number): void;
   retrySecuringChange(): SharedUpdateAdmission;
+  discardPendingConflictAndUseLatest(): Promise<SharedConflictDiscardResult>;
   reload(): Promise<void>;
 };
 
@@ -211,6 +213,17 @@ export function useSharedAppData(
       ? binding.controller.reload()
       : Promise.resolve();
   }, [authenticatedUserId]);
+  const discardPendingConflictAndUseLatest = useCallback(async (): Promise<SharedConflictDiscardResult> => {
+    const binding = controllerRef.current;
+    if (!binding || binding.userId !== authenticatedUserId) {
+      return {
+        status: 'rejected',
+        reason: 'not_conflict',
+        message: 'The preserved conflict is not available for this account.',
+      };
+    }
+    return binding.controller.discardPendingConflictAndUseLatest();
+  }, [authenticatedUserId]);
 
   const state = scopeSharedStateToAuthenticatedUser(
     authenticatedUserId,
@@ -223,6 +236,7 @@ export function useSharedAppData(
     update,
     recordLocalSafetyBlock,
     retrySecuringChange,
+    discardPendingConflictAndUseLatest,
     reload,
   };
 }

@@ -273,7 +273,18 @@ class SupabaseSharedLocationStateRepository<T>
 
     if (current.row) {
       if (current.row.revision !== expectedRevision) {
-        return { status: 'conflict', current: mapState<T>(current.row) };
+        const revisionChainVerified = current.row.revision === expectedRevision + 1
+          || (current.row.revision > expectedRevision + 1
+            && await this.verifyRevisionChain(
+              locationId,
+              expectedRevision,
+              current.row.revision,
+            ));
+        return {
+          status: 'conflict',
+          current: mapState<T>(current.row),
+          ...(revisionChainVerified ? { revisionChainVerified: true } : {}),
+        };
       }
 
       return unavailable(
@@ -293,6 +304,30 @@ class SupabaseSharedLocationStateRepository<T>
     }
 
     return unavailable('Shared location state could not be checked.', true);
+  }
+
+  private async verifyRevisionChain(
+    locationId: string,
+    baseRevision: number,
+    currentRevision: number,
+  ): Promise<boolean> {
+    if (!this.client) {
+      return false;
+    }
+
+    try {
+      const { data, error } = await this.client.rpc(
+        'verify_location_state_revision_chain',
+        {
+          p_location_id: locationId,
+          p_base_revision: baseRevision,
+          p_current_revision: currentRevision,
+        },
+      );
+      return error === null && data === true;
+    } catch {
+      return false;
+    }
   }
 }
 

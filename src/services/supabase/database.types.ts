@@ -117,6 +117,14 @@ export type Database = {
         }
         Returns: undefined
       }
+      verify_location_state_revision_chain: {
+        Args: {
+          p_base_revision: number
+          p_current_revision: number
+          p_location_id: string
+        }
+        Returns: boolean
+      }
     }
     Enums: {
       [_ in never]: never

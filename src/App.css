@@ -4611,6 +4611,30 @@ button.existing-reservation-option {
   line-height: 1.4;
 }
 
+.conflict-discard {
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 2px solid var(--cs-danger, #c92f43);
+  border-radius: 1rem;
+  background: var(--cs-danger-soft, #fff0f2);
+  text-align: left;
+}
+
+.conflict-discard h2,
+.conflict-discard p {
+  margin-top: 0;
+}
+
+.conflict-discard-action {
+  background: var(--cs-danger, #c92f43);
+}
+
+.conflict-discard-error {
+  margin-bottom: 0;
+  color: var(--cs-danger, #c92f43);
+  font-weight: 700;
+}
+
 .auth-spinner {
   width: 34px;
   height: 34px;

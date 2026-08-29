@@ -18,7 +18,12 @@ export type LoadSharedLocationStateResult<T> =
 
 export type SaveSharedLocationStateResult<T> =
   | { status: 'accepted'; value: SharedLocationState<T> }
-  | { status: 'conflict'; current: SharedLocationState<T> | null }
+  | {
+      status: 'conflict';
+      current: SharedLocationState<T> | null;
+      /** True only when the server proved every intermediate accepted revision is monotonic. */
+      revisionChainVerified?: boolean;
+    }
   | { status: 'unavailable'; error: SharedStateRepositoryError };
 
 export type SharedLocationStateInvalidation = {

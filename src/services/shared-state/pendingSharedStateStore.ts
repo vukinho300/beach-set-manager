@@ -15,6 +15,11 @@ export interface PendingSharedStateStore<T> {
   load(userId: string, locationId: string): Promise<PendingSharedStateRecord<T> | null>;
   save(record: PendingSharedStateRecord<T>): Promise<void>;
   remove(userId: string, locationId: string): Promise<void>;
+  /**
+   * Destructively removes every durable mirror for one user + location.
+   * Normal accepted-save cleanup may remain best-effort through `remove`.
+   */
+  discard?(userId: string, locationId: string): Promise<void>;
 }
 
 class InMemoryPendingSharedStateStore<T> implements PendingSharedStateStore<T> {
@@ -31,6 +36,10 @@ class InMemoryPendingSharedStateStore<T> implements PendingSharedStateStore<T> {
   async remove(userId: string, locationId: string): Promise<void> {
     this.records.delete(recordKey(userId, locationId));
   }
+
+  async discard(userId: string, locationId: string): Promise<void> {
+    await this.remove(userId, locationId);
+  }
 }
 
 type StoredPendingSharedStateRecord<T> = PendingSharedStateRecord<T> & {
@@ -45,6 +54,7 @@ const LOCAL_STORAGE_PREFIX = 'beach-set-manager-shared-pending-fallback-v1:';
 export const PENDING_LOAD_TIMEOUT_MS = 3_000;
 export const PENDING_WRITE_TIMEOUT_MS = 2_500;
 export const PENDING_REMOVE_TIMEOUT_MS = 2_500;
+export const PENDING_CONFLICT_DISCARD_TIMEOUT_MS = 6_000;
 export const INDEXED_DB_OPERATION_TIMEOUT_MS = 2_500;
 
 export type PendingStoreOperation = 'load' | 'save' | 'remove' | 'indexeddb';
@@ -147,6 +157,22 @@ class IndexedDbPendingSharedStateStore<T> implements PendingSharedStateStore<T> 
     try {
       await transactionComplete(transaction);
     } catch (error) {
+      this.invalidateDatabase(transaction.db);
+      throw error;
+    }
+  }
+
+  async discard(userId: string, locationId: string): Promise<void> {
+    const transaction = await this.openTransaction('readwrite');
+    transaction.objectStore(STORE_NAME).delete(recordKey(userId, locationId));
+    try {
+      await transactionComplete(transaction);
+    } catch (error) {
+      try {
+        transaction.abort();
+      } catch {
+        // The transaction may already be complete/aborted.
+      }
       this.invalidateDatabase(transaction.db);
       throw error;
     }
@@ -281,6 +307,10 @@ class LocalStoragePendingSharedStateStore<T> implements PendingSharedStateStore<
   async remove(userId: string, locationId: string): Promise<void> {
     this.storage.removeItem(`${LOCAL_STORAGE_PREFIX}${recordKey(userId, locationId)}`);
   }
+
+  async discard(userId: string, locationId: string): Promise<void> {
+    await this.remove(userId, locationId);
+  }
 }
 
 class HangingSaveTestPendingSharedStateStore<T> implements PendingSharedStateStore<T> {
@@ -297,10 +327,16 @@ class HangingSaveTestPendingSharedStateStore<T> implements PendingSharedStateSto
   remove(userId: string, locationId: string): Promise<void> {
     return this.delegate.remove(userId, locationId);
   }
+
+  discard(userId: string, locationId: string): Promise<void> {
+    return this.delegate.discard?.(userId, locationId)
+      ?? this.delegate.remove(userId, locationId);
+  }
 }
 
 class MirroredPendingSharedStateStore<T> implements PendingSharedStateStore<T> {
   private primaryQueue: Promise<void> = Promise.resolve();
+  private primaryGeneration = 0;
 
   constructor(
     private readonly primary: PendingSharedStateStore<T>,
@@ -349,11 +385,14 @@ class MirroredPendingSharedStateStore<T> implements PendingSharedStateStore<T> {
       // IndexedDB remains an independent durable path below.
     }
 
-    const primarySave = this.enqueuePrimary(() => withDurabilityDeadline(
-      this.primary.save(record),
-      PENDING_WRITE_TIMEOUT_MS,
-      'save',
-    ));
+    const generation = this.primaryGeneration;
+    const primarySave = this.enqueuePrimary(() => generation === this.primaryGeneration
+      ? withDurabilityDeadline(
+          this.primary.save(record),
+          PENDING_WRITE_TIMEOUT_MS,
+          'save',
+        )
+      : Promise.resolve());
     if (fallbackSaved) {
       return;
     }
@@ -361,6 +400,7 @@ class MirroredPendingSharedStateStore<T> implements PendingSharedStateStore<T> {
   }
 
   async remove(userId: string, locationId: string): Promise<void> {
+    this.primaryGeneration += 1;
     let fallbackRemoved = false;
     try {
       await withDurabilityDeadline(
@@ -382,6 +422,26 @@ class MirroredPendingSharedStateStore<T> implements PendingSharedStateStore<T> {
       return;
     }
     await primaryRemove;
+  }
+
+  async discard(userId: string, locationId: string): Promise<void> {
+    this.primaryGeneration += 1;
+    const fallbackRemove = withDurabilityDeadline(
+      this.fallback.discard?.(userId, locationId)
+        ?? this.fallback.remove(userId, locationId),
+      PENDING_REMOVE_TIMEOUT_MS,
+      'remove',
+    );
+    const primaryRemove = this.enqueuePrimary(() => withDurabilityDeadline(
+      this.primary.discard?.(userId, locationId)
+        ?? this.primary.remove(userId, locationId),
+      PENDING_REMOVE_TIMEOUT_MS,
+      'remove',
+    ));
+    const results = await Promise.allSettled([fallbackRemove, primaryRemove]);
+    if (results.some((result) => result.status === 'rejected')) {
+      throw new Error('One or more device recovery copies could not be removed.');
+    }
   }
 
   private enqueuePrimary(operation: () => Promise<void>): Promise<void> {

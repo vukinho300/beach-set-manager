@@ -4,6 +4,7 @@ import type {
 } from './pendingSharedStateStore';
 import {
   DurabilityTimeoutError,
+  PENDING_CONFLICT_DISCARD_TIMEOUT_MS,
   PENDING_LOAD_TIMEOUT_MS,
   PENDING_REMOVE_TIMEOUT_MS,
   PENDING_WRITE_TIMEOUT_MS,
@@ -35,6 +36,19 @@ export type SharedUpdateRejectionReason =
 export type SharedUpdateAdmission =
   | { status: 'accepted'; kind: 'queued' | 'no_change' }
   | { status: 'rejected'; reason: SharedUpdateRejectionReason };
+
+export type SharedConflictDiscardResult =
+  | { status: 'discarded' }
+  | {
+      status: 'rejected';
+      reason:
+        | 'not_conflict'
+        | 'authoritative_unavailable'
+        | 'authoritative_invalid'
+        | 'pending_remove_failed'
+        | 'deactivated';
+      message: string;
+    };
 
 export type SharedStateControllerState<T> =
   | { status: 'loading' }
@@ -330,6 +344,100 @@ export class SharedStateController<T> {
     );
     void this.persistLatestDesiredState();
     return { status: 'accepted', kind: 'queued' };
+  }
+
+  async discardPendingConflictAndUseLatest(): Promise<SharedConflictDiscardResult> {
+    if (this.deactivated) {
+      return {
+        status: 'rejected',
+        reason: 'deactivated',
+        message: 'This shared-data session is no longer active.',
+      };
+    }
+    if (this.state.status !== 'conflict' || !this.pendingRecord) {
+      return {
+        status: 'rejected',
+        reason: 'not_conflict',
+        message: 'There is no preserved conflict to discard.',
+      };
+    }
+
+    const conflictState = this.state;
+    const pendingAtStart = this.pendingRecord;
+    const epoch = ++this.loadEpoch;
+    this.cancelRetry();
+
+    let loadResult: LoadSharedLocationStateResult<T>;
+    try {
+      loadResult = await this.repository.load(this.locationId);
+    } catch {
+      return {
+        status: 'rejected',
+        reason: 'authoritative_unavailable',
+        message: 'Current shared data could not be loaded. The preserved change was not discarded.',
+      };
+    }
+    if (
+      this.deactivated
+      || epoch !== this.loadEpoch
+      || this.state !== conflictState
+      || this.pendingRecord !== pendingAtStart
+    ) {
+      return {
+        status: 'rejected',
+        reason: this.deactivated ? 'deactivated' : 'not_conflict',
+        message: 'The conflict changed while recovery was running. The preserved change was not discarded.',
+      };
+    }
+    if (loadResult.status !== 'found') {
+      return {
+        status: 'rejected',
+        reason: 'authoritative_unavailable',
+        message: 'Current shared data could not be loaded. The preserved change was not discarded.',
+      };
+    }
+
+    const authoritative = this.normalizeSharedValue(loadResult.value);
+    if (!authoritative) {
+      return {
+        status: 'rejected',
+        reason: 'authoritative_invalid',
+        message: 'Current shared data is invalid. The preserved change was not discarded.',
+      };
+    }
+
+    try {
+      const discardOperation = this.pendingStore.discard?.(this.userId, this.locationId)
+        ?? this.pendingStore.remove(this.userId, this.locationId);
+      await withDurabilityDeadline(
+        discardOperation,
+        PENDING_CONFLICT_DISCARD_TIMEOUT_MS,
+        'remove',
+      );
+    } catch {
+      return {
+        status: 'rejected',
+        reason: 'pending_remove_failed',
+        message: 'This device could not remove the preserved change. It remains blocked and preserved.',
+      };
+    }
+
+    if (this.deactivated || epoch !== this.loadEpoch) {
+      return {
+        status: 'rejected',
+        reason: this.deactivated ? 'deactivated' : 'not_conflict',
+        message: 'The shared-data session changed while recovery was running.',
+      };
+    }
+
+    this.confirmed = authoritative;
+    this.revision = authoritative.revision;
+    this.generation += 1;
+    this.resetPendingMemory();
+    this.paused = false;
+    this.publishReady(authoritative, 'saved', 'idle');
+    void this.drainRemoteInvalidations();
+    return { status: 'discarded' };
   }
 
   private async loadAuthoritativeState(mode: 'initial' | 'background'): Promise<number | null> {
@@ -879,6 +987,7 @@ export class SharedStateController<T> {
           expectedRevision,
           stateToSave,
           epoch,
+          result.revisionChainVerified === true,
         )
       ) {
         return;
@@ -935,6 +1044,7 @@ export class SharedStateController<T> {
     expectedRevision: number,
     stateToSave: T,
     epoch: number,
+    revisionChainVerified: boolean,
   ): Promise<boolean> {
     const pending = this.pendingRecord;
     const latestDesired = this.desiredState;
@@ -943,7 +1053,11 @@ export class SharedStateController<T> {
       || !this.confirmed
       || !pending
       || !latestDesired
-      || current.revision !== expectedRevision + 1
+      || current.revision <= expectedRevision
+      || (
+        current.revision !== expectedRevision + 1
+        && !revisionChainVerified
+      )
       || this.confirmed.revision !== expectedRevision
       || pending.baseRevision !== expectedRevision
       || !this.equals(pending.baseState, this.confirmed.state)
